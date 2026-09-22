@@ -1,7 +1,13 @@
 import type { Finding, Stats } from '../types.js';
 import { bold, dim, cyan, green, severityColour, bar, plural } from '../util/term.js';
 
-export function renderSummary(stats: Stats, warnings: string[]): string {
+/**
+ * Headline numbers count only findings above the confidence floor, because they
+ * drive the CI budget. The list below them shows everything, so the two can
+ * legitimately disagree — which reads as a contradiction unless it is said out
+ * loud.
+ */
+export function renderSummary(stats: Stats, warnings: string[], shown = 0): string {
   const lines: string[] = [''];
   lines.push(
     `${bold('scanned')} ${plural(stats.files, 'file')}, ${plural(stats.symbols, 'symbol')}, ${plural(stats.edges, 'edge')} ` +
@@ -28,6 +34,14 @@ export function renderSummary(stats: Stats, warnings: string[]): string {
     const clean = 1 - (stats.deadLoc + stats.duplicateLoc) / stats.loc;
     lines.push('');
     lines.push(`  ${bold('load-bearing')}  ${(clean * 100).toFixed(1)}% of ${stats.loc} lines`);
+  }
+
+  const counted = stats.deadLoc + stats.duplicateLoc + stats.driftCount + stats.contradictionCount;
+  if (shown > 0 && counted === 0) {
+    lines.push('');
+    lines.push(
+      `  ${dim('Everything below is under 50% confidence, so none of it counts towards these numbers or the CI budget.')}`,
+    );
   }
 
   for (const warning of warnings) {

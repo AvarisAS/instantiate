@@ -251,9 +251,26 @@ function record(
     // "internal", and everything else is part of the module's surface.
     exported: !name.startsWith('_'),
     loc: node.endPosition.row - node.startPosition.row + 1,
-    body: text.replace(/#[^\n]*/g, ' ').replace(/\s+/g, ' ').trim(),
+    body: normaliseBody(text),
     signature: signatureOf(node),
   });
+}
+
+/**
+ * Strip docstrings as well as comments.
+ *
+ * A docstring is prose, not behaviour, and Python puts a great deal of it
+ * inside the function body. Left in, it dominated both similarity signals: two
+ * unrelated methods with long typed signatures and thorough documentation
+ * scored 81% on their prose alone, which is the opposite of what this measures.
+ */
+function normaliseBody(text: string): string {
+  return text
+    .replace(/'''[\s\S]*?'''/g, ' ')
+    .replace(/"""[\s\S]*?"""/g, ' ')
+    .replace(/#[^\n]*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function signatureOf(node: Parser.SyntaxNode): string {

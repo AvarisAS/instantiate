@@ -16,6 +16,8 @@ export interface DupeCluster {
   connected: boolean;
   /** The same name implemented once per file: translations, adapters, drivers. */
   parallelSet: boolean;
+  /** Thin wrappers that all delegate to one shared target. */
+  delegating: boolean;
 }
 
 export interface DupeResult {
@@ -27,6 +29,23 @@ export interface DupeResult {
 }
 
 const STRUCTURE_WEIGHT = 0.5;
+
+/**
+ * Both signals must clear a floor, not merely average well.
+ *
+ * Measured on real repositories, the two signals do different jobs than
+ * expected. False positives are *vocabulary* matches: a tagged-template helper
+ * against a child-node loop, an error boundary against a suspense wrapper —
+ * same domain words, 0.74 to 0.93 on vocabulary, but only 0.58 to 0.74 on
+ * structure, because they do different things with those words.
+ *
+ * Genuine re-implementations perform the same steps, so they agree on
+ * structure: 1.00 for two copies of one function, and 1.00 for the same idea
+ * rewritten with different names. Structure is what separates them, and
+ * averaging let a moderate structure score hide behind a strong vocabulary one.
+ */
+const STRUCTURE_FLOOR = 0.85;
+const VOCABULARY_FLOOR = 0.45;
 
 /**
  * Headline numbers drive the CI budget, so only findings we would actually
@@ -45,10 +64,13 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
   for (const symbol of graph.symbols.values()) {
     if (symbol.kind !== 'function' && symbol.kind !== 'method') continue;
     if (symbol.loc < config.dupeMinLoc) continue;
-    // Every Error subclass constructor is `super(message); this.name = '...'`.
-    // They are near-identical because the language requires it, not because
-    // anyone re-implemented anything, so they are not candidates at all.
+    // A constructor, and Python's `__init__` and friends, are near-identical
+    // because the language requires the shape, not because anyone
+    // re-implemented anything. They are not candidates at all.
     if (symbol.name === 'constructor') continue;
+    if (symbol.name.startsWith('__') && symbol.name.endsWith('__')) continue;
+    // A stub declares an interface; it has no implementation to duplicate.
+    if (isStub(symbol)) continue;
     candidates.push({
       symbol,
       structure: structuralBag(symbol.body),
@@ -57,8 +79,9 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
   }
 
   const threshold = calibrate(candidates, config);
+  const parallelDirs = findParallelDirectories(graph);
   const pairs = scorePairs(candidates, threshold);
-  const clusters = cluster(pairs, candidates, graph);
+  const clusters = cluster(pairs, candidates, graph, parallelDirs);
 
   const findings: Finding[] = [];
   let duplicateLoc = 0;
@@ -135,9 +158,23 @@ function calibrate(candidates: Candidate[], config: Config): number {
 }
 
 function similarity(a: Candidate, b: Candidate): number {
+  const structure = cosine(a.structure, b.structure);
+  if (structure < STRUCTURE_FLOOR) return 0;
+  const vocabulary = cosine(a.vocabulary, b.vocabulary);
+  if (vocabulary < VOCABULARY_FLOOR) return 0;
+  return STRUCTURE_WEIGHT * structure + (1 - STRUCTURE_WEIGHT) * vocabulary;
+}
+
+/**
+ * One declaration inside another: a closure and the function that holds it.
+ *
+ * The parent's text contains the child's, so similarity is high by
+ * construction and means nothing. This is containment, not duplication.
+ */
+function contains(a: CodeSymbol, b: CodeSymbol): boolean {
+  if (a.file !== b.file) return false;
   return (
-    STRUCTURE_WEIGHT * cosine(a.structure, b.structure) +
-    (1 - STRUCTURE_WEIGHT) * cosine(a.vocabulary, b.vocabulary)
+    (a.line <= b.line && b.endLine <= a.endLine) || (b.line <= a.line && a.endLine <= b.endLine)
   );
 }
 
@@ -173,6 +210,8 @@ function scorePairs(candidates: Candidate[], threshold: number): Pair[] {
         const key = a * candidates.length + b;
         if (seen.has(key)) continue;
         seen.add(key);
+        if (contains(candidates[a].symbol, candidates[b].symbol)) continue;
+        if (!comparableSize(candidates[a].symbol, candidates[b].symbol)) continue;
         const score = similarity(candidates[a], candidates[b]);
         if (score >= threshold) pairs.push({ a, b, score });
       }
@@ -182,7 +221,12 @@ function scorePairs(candidates: Candidate[], threshold: number): Pair[] {
 }
 
 /** Union-find over the surviving pairs: a cluster is a connected component. */
-function cluster(pairs: Pair[], candidates: Candidate[], graph: CodeGraph): DupeCluster[] {
+function cluster(
+  pairs: Pair[],
+  candidates: Candidate[],
+  graph: CodeGraph,
+  parallelDirs: Set<string>,
+): DupeCluster[] {
   const parent = new Map<number, number>();
   const find = (x: number): number => {
     let root = x;
@@ -224,11 +268,129 @@ function cluster(pairs: Pair[], candidates: Candidate[], graph: CodeGraph): Dupe
       similarity: mean,
       crossFile: new Set(members.map((m) => m.file)).size > 1,
       connected,
-      parallelSet: isParallelSet(members),
+      parallelSet: isParallelSet(members) || spansParallelSurfaces(members, parallelDirs),
+      delegating: isDelegating(members, graph),
     });
   }
 
   return out;
+}
+
+/**
+ * A body that only announces it is not implemented: an abstract base's method,
+ * or a placeholder. Every stub resembles every other stub, and none of them is
+ * code anyone would merge.
+ */
+function isStub(symbol: CodeSymbol): boolean {
+  return /\b(raise\s+NotImplementedError|throw\s+new\s+Error\(\s*['"`](not implemented|unimplemented)|NotImplementedError\b)/i.test(
+    symbol.body,
+  );
+}
+
+/**
+ * Duplicates are substitutable, and substitutable code is comparable in size.
+ *
+ * A 1078-character implementation and a 231-character declaration matched at
+ * 0.86 because both open with a long typed parameter list, which dominates the
+ * token skeleton. Neither could replace the other, so it was never a duplicate.
+ */
+const MAX_SIZE_RATIO = 2.5;
+
+function comparableSize(a: CodeSymbol, b: CodeSymbol): boolean {
+  const larger = Math.max(a.body.length, b.body.length);
+  const smaller = Math.min(a.body.length, b.body.length);
+  return smaller > 0 && larger / smaller <= MAX_SIZE_RATIO;
+}
+
+const NON_PRODUCTION =
+  /(^|\/)(bench|benchmark|benchmarks|perf|perf-measures|examples?|fixtures?|__fixtures__|demo|playground)\//i;
+
+function isProductionCode(file: string): boolean {
+  return !NON_PRODUCTION.test(file);
+}
+
+/**
+ * Directories that are parallel surfaces over one idea.
+ *
+ * zod ships `core`, `classic` and `mini`: three published APIs with the same
+ * function names and deliberately different generics. A repository with a `v3`
+ * beside a `v4`, or one driver directory per backend, has the same shape.
+ * Two directories that share a large share of their symbol names are answering
+ * the same questions on purpose, so resemblance between them is the design.
+ */
+function findParallelDirectories(graph: CodeGraph): Set<string> {
+  const byDir = new Map<string, Set<string>>();
+  for (const symbol of graph.symbols.values()) {
+    if (symbol.kind === 'module') continue;
+    const dir = symbol.file.slice(0, symbol.file.lastIndexOf('/'));
+    const names = byDir.get(dir);
+    if (names) names.add(symbol.name);
+    else byDir.set(dir, new Set([symbol.name]));
+  }
+
+  const dirs = [...byDir.entries()].filter(([, names]) => names.size >= 8);
+  const parallel = new Set<string>();
+
+  for (let i = 0; i < dirs.length; i++) {
+    for (let j = i + 1; j < dirs.length; j++) {
+      const [dirA, namesA] = dirs[i];
+      const [dirB, namesB] = dirs[j];
+      const shared = [...namesA].filter((n) => namesB.has(n)).length;
+      const smaller = Math.min(namesA.size, namesB.size);
+      if (shared >= 8 && shared / smaller >= 0.4) {
+        parallel.add(pairKey(dirA, dirB));
+      }
+    }
+  }
+  return parallel;
+}
+
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Does this cluster straddle two directories that mirror each other? */
+function spansParallelSurfaces(members: CodeSymbol[], parallelDirs: Set<string>): boolean {
+  const dirs = [...new Set(members.map((m) => m.file.slice(0, m.file.lastIndexOf('/'))))];
+  for (let i = 0; i < dirs.length; i++) {
+    for (let j = i + 1; j < dirs.length; j++) {
+      if (parallelDirs.has(pairKey(dirs[i], dirs[j]))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Thin wrappers over one shared implementation: `head`, `options`, `delete`,
+ * each a line that forwards to `request`.
+ *
+ * They resemble each other because that is the entire design — a named door
+ * onto one function — and merging them would delete the public API.
+ */
+function isDelegating(members: CodeSymbol[], graph: CodeGraph): boolean {
+  if (members.length < 2) return false;
+  // Only a thin wrapper qualifies, measured on the normalised body rather than
+  // on line count: a well-documented one-line forwarder runs to twenty lines of
+  // which nineteen are docstring.
+  if (members.some((m) => m.body.length > 240)) return false;
+
+  const ids = new Set(members.map((m) => m.id));
+  // Match on the callee's *name*, not its identity: `api.head` forwards to
+  // `api.request` while `Session.head` forwards to `Session.request`. Those are
+  // two symbols and one idea, and requiring identity missed the whole family.
+  const targets = members.map((m) => {
+    const names = new Set<string>();
+    for (const edge of graph.edges) {
+      if (edge.from !== m.id || ids.has(edge.to)) continue;
+      const target = graph.symbols.get(edge.to);
+      if (target && target.kind !== 'module') names.add(target.name);
+    }
+    return names;
+  });
+  if (targets.some((t) => t.size === 0)) return false;
+
+  const [first, ...rest] = targets;
+  return [...first].some((candidate) => rest.every((t) => t.has(candidate)));
 }
 
 /**
@@ -242,13 +404,20 @@ function cluster(pairs: Pair[], candidates: Candidate[], graph: CodeGraph): Dupe
  */
 function isParallelSet(members: CodeSymbol[]): boolean {
   if (members.length < 3) return false;
-  const files = new Set(members.map((m) => m.file));
-  // One implementation per file, or close to it.
-  if (files.size < members.length * 0.7) return false;
 
   const names = new Map<string, number>();
   for (const member of members) names.set(member.name, (names.get(member.name) ?? 0) + 1);
   const commonest = Math.max(...names.values());
+
+  // One name implemented once per class is polymorphism: each subclass must
+  // provide its own `_parse`, and that is the design rather than a repetition
+  // anyone introduced by accident.
+  const containers = new Set(members.map((m) => m.id.split('#')[1].split('.').slice(0, -1).join('.')));
+  if (commonest >= 3 && containers.size >= 3) return true;
+
+  const files = new Set(members.map((m) => m.file));
+  // One implementation per file, or close to it.
+  if (files.size < members.length * 0.7) return false;
   if (commonest >= 3) return true;
 
   // Sibling files under one directory implementing the same small vocabulary is
@@ -295,6 +464,11 @@ function rankScore(group: DupeCluster): number {
   let score = group.similarity;
   // One implementation per file is structure, not redundancy.
   if (group.parallelSet) score -= 0.6;
+  // Named doors onto one shared function: merging them deletes the API.
+  if (group.delegating) score -= 0.5;
+  // Benchmarks, fixtures and examples repeat themselves on purpose, to compare
+  // variants. Real, and not work anyone is going to do.
+  if (group.members.every((m) => !isProductionCode(m.file))) score -= 0.3;
   // Past a handful, confidence falls away with size.
   if (group.members.length > ACTIONABLE_CLUSTER) {
     score -= Math.min(0.5, 0.08 * (group.members.length - ACTIONABLE_CLUSTER));
@@ -332,10 +506,15 @@ function describe(group: DupeCluster): string {
   const parts = [
     `${group.members.length} symbols share ${(group.similarity * 100).toFixed(0)}% similarity: ${where}.`,
   ];
-  if (group.parallelSet) {
+  if (group.delegating) {
     parts.push(
-      'One implementation per file, all named alike — a deliberate parallel set such as ' +
-        'translations, adapters or drivers, where identical structure is the point.',
+      'Each one forwards to the same underlying function, so these are named ' +
+        'entry points onto one implementation rather than repeated work.',
+    );
+  } else if (group.parallelSet) {
+    parts.push(
+      'A deliberate parallel set — translations, adapters, drivers, or two API ' +
+        'surfaces over one idea — where matching structure is the design rather than a repetition.',
     );
   } else if (group.connected) {
     parts.push('One of them calls another, so this may be deliberate delegation rather than duplication.');

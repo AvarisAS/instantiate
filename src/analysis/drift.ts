@@ -87,12 +87,28 @@ export interface DriftResult {
   count: number;
 }
 
+/**
+ * A convention is what the shipping code does.
+ *
+ * Benchmarks compare variants on purpose, examples are written for clarity
+ * rather than consistency, and a demo uses whatever the framework prefers.
+ * Letting them vote produced verdicts anchored in `benchmarks/fetch/bench.mts`
+ * and `examples/demo`, which tell a maintainer nothing about their own codebase.
+ */
+const NON_PRODUCTION =
+  /(^|\/)(bench|benchmark|benchmarks|perf|perf-measures|examples?|demo|playground|fixtures?|__fixtures__|docs?)\//i;
+
+function isProductionCode(file: string): boolean {
+  return !NON_PRODUCTION.test(file);
+}
+
 export function findDrift(graph: CodeGraph): DriftResult {
   const findings: Finding[] = [];
 
   for (const category of CATEGORIES) {
     const uses = new Map<string, CodeSymbol[]>();
     for (const symbol of graph.symbols.values()) {
+      if (!isProductionCode(symbol.file)) continue;
       if (category.exempt?.test(symbol.file)) continue;
       for (const dialect of category.dialects) {
         if (dialect.test.test(symbol.body)) {

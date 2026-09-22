@@ -119,7 +119,7 @@ async function main(): Promise<number> {
         console.log(JSON.stringify({ stats: result.stats, findings: all, warnings: result.warnings }, null, 2));
         return 0;
       }
-      console.log(renderSummary(result.stats, result.warnings));
+      console.log(renderSummary(result.stats, result.warnings, all.length));
       console.log(renderFindings(all, limit));
       console.log(dim(`  ${cyan('instantiate report')} writes a shareable HTML version of this.\n`));
       return 0;
