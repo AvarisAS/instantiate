@@ -19,6 +19,8 @@ interface Category {
   dialects: Dialect[];
   /** Below this many uses the category has no established convention to drift from. */
   minUses: number;
+  /** Files where a dialect is mandated by a framework rather than chosen. */
+  exempt?: RegExp;
 }
 
 const CATEGORIES: Category[] = [
@@ -58,6 +60,10 @@ const CATEGORIES: Category[] = [
     key: 'exports',
     label: 'module exports',
     minUses: 8,
+    // Next.js, Nuxt and friends *require* a default export from route files.
+    // Reading a framework's mandated shape as an inconsistency is a false
+    // positive that makes the whole category look untrustworthy.
+    exempt: /(^|\/)(app|pages|src\/app|src\/pages)\/.*\/?(page|layout|route|loading|error|not-found|template|default|middleware|sitemap|robots|opengraph-image|icon)\.(tsx?|jsx?|mts)$|\.config\.(ts|js|mjs|cjs)$/,
     dialects: [
       { name: 'named export', test: /\bexport\s+(const|function|class|interface|type|async)\b/ },
       { name: 'default export', test: /\bexport\s+default\b/ },
@@ -87,6 +93,7 @@ export function findDrift(graph: CodeGraph): DriftResult {
   for (const category of CATEGORIES) {
     const uses = new Map<string, CodeSymbol[]>();
     for (const symbol of graph.symbols.values()) {
+      if (category.exempt?.test(symbol.file)) continue;
       for (const dialect of category.dialects) {
         if (dialect.test.test(symbol.body)) {
           const list = uses.get(dialect.name);
@@ -108,13 +115,17 @@ export function findDrift(graph: CodeGraph): DriftResult {
     // is there an obvious action, so that is what we rank highest.
     const minority = ranked.slice(1);
     const minorityCount = minority.reduce((sum, [, list]) => sum + list.length, 0);
+
+    // A single outlier among hundreds is not a convention being contested, and
+    // reporting it produced headings like "named export 100%, default export 0%
+    // — 1 place deviates", which is arithmetic nonsense.
+    const minorityShare = minorityCount / total;
+    if (minorityShare < 0.02 && minorityCount < 3) continue;
     const deviants = minority.flatMap(([name, list]) =>
       list.map((s) => ({ dialect: name, id: s.id, file: s.file, line: s.line, name: s.name })),
     );
 
-    const breakdown = ranked
-      .map(([name, list]) => `${name} ${Math.round((list.length / total) * 100)}%`)
-      .join(', ');
+    const breakdown = ranked.map(([name, list]) => `${name} ${percent(list.length, total)}`).join(', ');
 
     findings.push({
       id: `drift:${category.key}`,
@@ -149,4 +160,12 @@ export function findDrift(graph: CodeGraph): DriftResult {
 
   findings.sort((a, b) => b.score - a.score);
   return { findings, count: findings.length };
+}
+
+/** Never round a non-zero share to 0%, nor a non-total share to 100%. */
+function percent(part: number, total: number): string {
+  const share = (part / total) * 100;
+  if (part > 0 && share < 1) return '<1%';
+  if (part < total && share > 99) return '>99%';
+  return `${Math.round(share)}%`;
 }

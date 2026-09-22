@@ -14,6 +14,8 @@ export interface DupeCluster {
   similarity: number;
   crossFile: boolean;
   connected: boolean;
+  /** The same name implemented once per file: translations, adapters, drivers. */
+  parallelSet: boolean;
 }
 
 export interface DupeResult {
@@ -69,14 +71,13 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
       .slice(1)
       .reduce((sum, s) => sum + s.loc, 0);
 
-    const names = group.members.map((m) => m.name);
     const score = rankScore(group);
     if (score >= METRIC_CONFIDENCE_FLOOR) duplicateLoc += removable;
     findings.push({
       id: `duplicate:${group.members.map((m) => m.id).join('|')}`,
       kind: 'duplicate',
       severity: removable >= 40 ? 'high' : removable >= 12 ? 'medium' : 'low',
-      title: `${group.members.length} implementations of the same thing: ${names.join(', ')}`,
+      title: titleOf(group),
       detail: describe(group),
       file: group.members[0].file,
       line: group.members[0].line,
@@ -223,10 +224,37 @@ function cluster(pairs: Pair[], candidates: Candidate[], graph: CodeGraph): Dupe
       similarity: mean,
       crossFile: new Set(members.map((m) => m.file)).size > 1,
       connected,
+      parallelSet: isParallelSet(members),
     });
   }
 
   return out;
+}
+
+/**
+ * One name, implemented once per file: `error` in sixty `locales/*.ts`, or a
+ * driver per backend.
+ *
+ * Identical structure is the entire point of such a set, and the differing
+ * content is the payload. Reporting zod's sixty translations as "redundant
+ * re-implementation" at 98% confidence is the single fastest way to lose a
+ * user's trust, so this is treated as structure, not redundancy.
+ */
+function isParallelSet(members: CodeSymbol[]): boolean {
+  if (members.length < 3) return false;
+  const files = new Set(members.map((m) => m.file));
+  // One implementation per file, or close to it.
+  if (files.size < members.length * 0.7) return false;
+
+  const names = new Map<string, number>();
+  for (const member of members) names.set(member.name, (names.get(member.name) ?? 0) + 1);
+  const commonest = Math.max(...names.values());
+  if (commonest >= 3) return true;
+
+  // Sibling files under one directory implementing the same small vocabulary is
+  // the same shape: `adapters/postgres.ts`, `adapters/mysql.ts`, and so on.
+  const directories = new Set([...files].map((f) => f.slice(0, f.lastIndexOf('/'))));
+  return directories.size === 1 && files.size >= 4;
 }
 
 /**
@@ -255,8 +283,22 @@ function isNamingFamily(group: DupeCluster): boolean {
   return false;
 }
 
+/**
+ * Accidental duplication comes in twos and threes: someone could not find the
+ * first one, so they wrote a second. Twenty-seven copies is not an accident —
+ * it is a pattern somebody chose, and no human is going to merge twenty-seven
+ * functions off the back of a report.
+ */
+const ACTIONABLE_CLUSTER = 4;
+
 function rankScore(group: DupeCluster): number {
   let score = group.similarity;
+  // One implementation per file is structure, not redundancy.
+  if (group.parallelSet) score -= 0.6;
+  // Past a handful, confidence falls away with size.
+  if (group.members.length > ACTIONABLE_CLUSTER) {
+    score -= Math.min(0.5, 0.08 * (group.members.length - ACTIONABLE_CLUSTER));
+  }
   // Same file, adjacent: usually deliberate overloads a reader can already see.
   if (!group.crossFile) score -= 0.15;
   // One calls the other, so it is layering rather than redundancy.
@@ -268,12 +310,34 @@ function rankScore(group: DupeCluster): number {
   return Math.max(0.05, Math.min(1, Math.round(score * 100) / 100));
 }
 
+/** Name the cluster without listing sixty symbols in a heading. */
+function titleOf(group: DupeCluster): string {
+  const unique = [...new Set(group.members.map((m) => m.name))];
+  const shown = unique.slice(0, 3).join(', ');
+  const rest = unique.length - 3;
+  const names = rest > 0 ? `${shown} and ${rest} more` : shown;
+
+  if (group.parallelSet) {
+    return `${group.members.length} parallel implementations of ${names}`;
+  }
+  return `${group.members.length} implementations of the same thing: ${names}`;
+}
+
 function describe(group: DupeCluster): string {
-  const where = group.members.map((m) => `${m.file}:${m.line}`).join(', ');
+  const shown = group.members.slice(0, 6).map((m) => `${m.file}:${m.line}`);
+  const where =
+    group.members.length > 6
+      ? `${shown.join(', ')} and ${group.members.length - 6} more`
+      : shown.join(', ');
   const parts = [
     `${group.members.length} symbols share ${(group.similarity * 100).toFixed(0)}% similarity: ${where}.`,
   ];
-  if (group.connected) {
+  if (group.parallelSet) {
+    parts.push(
+      'One implementation per file, all named alike — a deliberate parallel set such as ' +
+        'translations, adapters or drivers, where identical structure is the point.',
+    );
+  } else if (group.connected) {
     parts.push('One of them calls another, so this may be deliberate delegation rather than duplication.');
   } else if (isNamingFamily(group)) {
     parts.push('Their names share most of their words, so these may be a deliberate set of variants rather than redundant re-implementations.');
