@@ -49,6 +49,8 @@ interface FileIndex {
   imports: Map<string, { module: string; name?: string }>;
   /** Class name -> (method name -> symbol id). */
   classes: Map<string, Map<string, string>>;
+  /** Class name -> the names it inherits from. */
+  bases: Map<string, string[]>;
 }
 
 export async function buildPythonGraph(config: Config, files: string[]): Promise<PythonGraph> {
@@ -91,6 +93,7 @@ export async function buildPythonGraph(config: Config, files: string[]): Promise
       locals: new Map(),
       imports: new Map(),
       classes: new Map(),
+      bases: new Map(),
     };
     declareModule(index, symbols);
     declare(tree.rootNode, index, symbols);
@@ -164,6 +167,7 @@ function declare(
         index.locals.set(name, symbolId(index.file, name));
         const methods = new Map<string, string>();
         index.classes.set(name, methods);
+        index.bases.set(name, baseNames(child));
         const body = child.childForFieldName('body');
         if (body) declareMethods(body, name, index, symbols, methods);
       }
@@ -202,6 +206,21 @@ function declare(
       declare(child, index, symbols, className);
     }
   }
+}
+
+/** The names in `class Option(Parameter):`. */
+function baseNames(node: Parser.SyntaxNode): string[] {
+  const args = node.childForFieldName('superclasses');
+  if (!args) return [];
+  const out: string[] = [];
+  for (let i = 0; i < args.namedChildCount; i++) {
+    const child = args.namedChild(i);
+    if (!child) continue;
+    // `class X(Base)` and `class X(module.Base)` both name a base.
+    const text = child.type === 'attribute' ? child.text.split('.').pop()! : child.text;
+    if (/^[A-Za-z_]\w*$/.test(text)) out.push(text);
+  }
+  return out;
 }
 
 function declareMethods(
@@ -344,6 +363,46 @@ function connect(
 ): void {
   const moduleId = `${index.file}#<module>`;
 
+  // `__getattr__` at module level is Python's module attribute hook, and
+  // `__all__` and friends are read by the import machinery. Nothing names them.
+  for (const [name, id] of index.locals) {
+    if (name.startsWith('__') && name.endsWith('__')) {
+      edges.push({ from: moduleId, to: id, kind: 'calls', file: index.file, line: 1 });
+    }
+  }
+
+  // A reached base method reaches every override of it.
+  //
+  // `self.consume_value()` in `Parameter` resolves to `Parameter.consume_value`,
+  // but what runs for an `Option` is the override — which nothing else names,
+  // so every subclass implementation looked unreachable.
+  for (const [className, bases] of index.bases) {
+    const own = index.classes.get(className);
+    if (!own) continue;
+    for (const baseName of bases) {
+      // `class TextWrapper(textwrap.TextWrapper)` shadows its base's name, so a
+      // lookup finds the subclass itself and concludes the base is local when
+      // it is in fact the standard library's.
+      const candidates = allClasses(byModule, baseName).filter((m) => m !== own);
+      for (const candidate of candidates) {
+        for (const [methodName, baseId] of candidate) {
+          const override = own.get(methodName);
+          if (override && override !== baseId) {
+            edges.push({ from: baseId, to: override, kind: 'calls', file: index.file, line: 1 });
+          }
+        }
+      }
+      // A base outside this repository — `textwrap.TextWrapper` — still calls
+      // the override, so an override of an unknown base is reached by its class.
+      if (candidates.length === 0) {
+        const classId = symbolId(index.file, className);
+        for (const methodId of own.values()) {
+          edges.push({ from: classId, to: methodId, kind: 'calls', file: index.file, line: 1 });
+        }
+      }
+    }
+  }
+
   // The interpreter calls dunder methods itself: `__call__` on `auth(request)`,
   // `__enter__` on a `with` block, `__iter__` on a loop. Nothing in the source
   // names them, so a reachable class must be taken to reach its own.
@@ -358,7 +417,7 @@ function connect(
 
   // Importing a module runs it, and names what it brings in.
   for (const [alias, imported] of index.imports) {
-    const target = byModule.get(imported.module);
+    const target = importedModule(imported, alias, byModule);
     if (!target) continue;
     edges.push({ from: moduleId, to: `${target.file}#<module>`, kind: 'imports', file: index.file, line: 1 });
 
@@ -373,15 +432,21 @@ function connect(
     let scope = enclosing;
     let scopeClass = className;
 
+    // Only descend into a scope we actually recorded. A nested `def` — the
+    // inner function a decorator factory returns — is not a symbol, so keying
+    // edges on its name attributed them to something that does not exist, and
+    // everything it called looked unreachable.
     if (node.type === 'class_definition') {
       const name = node.childForFieldName('name')?.text;
-      if (name) {
-        scope = symbolId(index.file, name);
+      const candidate = name ? symbolId(index.file, name) : undefined;
+      if (name && candidate && symbols.has(candidate)) {
+        scope = candidate;
         scopeClass = name;
       }
     } else if (node.type === 'function_definition') {
       const name = node.childForFieldName('name')?.text;
-      if (name) scope = symbolId(index.file, name, className);
+      const candidate = name ? symbolId(index.file, name, className) : undefined;
+      if (candidate && symbols.has(candidate)) scope = candidate;
     } else if (node.type === 'call') {
       const callee = node.childForFieldName('function');
       if (callee) {
@@ -395,7 +460,28 @@ function connect(
           });
         }
       }
-    } else if (node.type === 'attribute' && scopeClass) {
+    } else if (node.type === 'attribute') {
+      // `types.OptionHelpExtra` in a type annotation names a symbol in another
+      // module without calling it, so the call path never saw it.
+      const object = node.childForFieldName('object');
+      const attribute = node.childForFieldName('attribute')?.text;
+      if (object?.type === 'identifier' && attribute) {
+        const imported = index.imports.get(object.text);
+        const target = imported ? importedModule(imported, object.text, byModule) : undefined;
+        const id = target?.locals.get(attribute);
+        if (id && id !== scope) {
+          edges.push({
+            from: scope,
+            to: id,
+            kind: 'references',
+            file: index.file,
+            line: node.startPosition.row + 1,
+          });
+        }
+      }
+    }
+
+    if (node.type === 'attribute' && scopeClass) {
       // `self.handler` used as a value, not called: `register_hook("x", self.handler)`
       // passes the method somewhere that will invoke it later. Without this edge
       // the method, and everything it reaches, looks unreachable.
@@ -435,6 +521,34 @@ function connect(
   visit(root, moduleId);
 }
 
+/** Every class of this name across the project, since Python has no types here. */
+function allClasses(
+  byModule: Map<string, FileIndex>,
+  className: string,
+): Array<Map<string, string>> {
+  const out: Array<Map<string, string>> = [];
+  for (const index of byModule.values()) {
+    const methods = index.classes.get(className);
+    if (methods) out.push(methods);
+  }
+  return out;
+}
+
+/**
+ * `from . import types` imports a submodule, not a name.
+ *
+ * Treating it as a name looked for `types` inside the package's `__init__`,
+ * found nothing, and left every reference through that alias unresolved.
+ */
+function importedModule(
+  imported: { module: string; name?: string },
+  alias: string,
+  byModule: Map<string, FileIndex>,
+): FileIndex | undefined {
+  const submodule = `${imported.module}.${imported.name ?? alias}`.replace(/^\./, '');
+  return byModule.get(submodule) ?? byModule.get(imported.module);
+}
+
 function resolveCall(
   callee: Parser.SyntaxNode,
   index: FileIndex,
@@ -463,12 +577,21 @@ function resolveCall(
     if (object?.type === 'identifier' && object.text === 'self' && className) {
       const own = index.classes.get(className)?.get(attribute);
       if (own) return [own];
+      // Declared on a base, or supplied by a subclass: either way `self.x()`
+      // runs something named x, and the override linking above carries it on.
+      const inherited = methodsByName.get(attribute);
+      if (inherited && inherited.length > 0) return inherited;
+    }
+
+    // `super().method()` runs the base implementation.
+    if (object?.type === 'call' && object.childForFieldName('function')?.text === 'super') {
+      return methodsByName.get(attribute) ?? [];
     }
 
     // `mod.function()` where mod was imported.
     if (object?.type === 'identifier') {
       const imported = index.imports.get(object.text);
-      const target = imported ? byModule.get(imported.module) : undefined;
+      const target = imported ? importedModule(imported, object.text, byModule) : undefined;
       const id = target?.locals.get(attribute);
       if (id) return [id];
     }

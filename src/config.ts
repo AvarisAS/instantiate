@@ -100,7 +100,7 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   entrypoints.push('**/{test_*,*_test}.py');
   entrypoints.push('{test,tests}/**/*.py');
 
-  entrypoints.push('{test,tests,spec,__tests__,test-d,type-tests,types-test}/**/*.{ts,tsx,js,jsx,mts,cts}');
+  entrypoints.push('{test,tests,spec,__tests__,test-d,type-tests,types-test}/**/*.{ts,tsx,js,jsx,mts,cts,py}');
   entrypoints.push('**/*.{test-d,typetest}.{ts,tsx}');
   entrypoints.push('**/*.{test,spec}.{ts,tsx,js,jsx}');
 
@@ -108,7 +108,9 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   // They are unreachable by construction, so reporting them is pure noise.
   // Matched at any depth, since a monorepo keeps them in packages/bench and the
   // like rather than at the root.
-  entrypoints.push(`**/{${SCRIPT_DIRS.join(',')}}/**/*.{ts,tsx,js,jsx,mts,cts}`);
+  // Every language, not just the TypeScript ones: click's examples are Python,
+  // and a glob listing only JS extensions made them unreachable by construction.
+  entrypoints.push(`**/{${SCRIPT_DIRS.join(',')}}/**/*.{ts,tsx,js,jsx,mts,cts,py}`);
 
   // A package's `__init__.py` re-exports are its published surface, exactly as a
   // barrel is in TypeScript: absent callers inside the repo are the point.
@@ -130,7 +132,7 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
 /** Directories whose files are run, not imported. */
 const SCRIPT_DIRS = [
   'scripts', 'script', 'bench', 'benchmark', 'benchmarks', 'perf', 'perf-measures',
-  'examples', 'example', 'tools', 'build', 'e2e', 'fixtures',
+  'examples', 'example', 'tools', 'build', 'e2e', 'fixtures', 'docs', 'doc',
 ];
 
 /** Workspace package directories, from `workspaces` or the usual layout. */
