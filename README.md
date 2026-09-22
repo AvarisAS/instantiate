@@ -29,8 +29,17 @@ and lowest-risk action in a codebase nobody understands, so it comes first.
 Matched on structure *and* vocabulary, so same-shape-different-domain does not
 trigger and different-shape-same-job does.
 
+**Contradictions** — one fact with two answers. The same environment variable
+defaulting to two values, one named timeout that is 3 seconds here and 30 there,
+dates read as UTC in one module and local time in another. Each site is
+defensible alone, which is why review never catches it.
+
 **Convention drift** — error handling done four ways because four sessions each
 guessed. Invisible in any single file, obvious in aggregate.
+
+**Trends** — the same numbers walked back through git history. A single scan
+saying 4% dead is a fact nobody acts on; the same number rising for six weeks is
+an argument, and a falling one is the reason to keep going.
 
 **Concepts** — the graph collapsed into a few dozen named groups. The only
 whole-codebase view that survives scale.
@@ -114,7 +123,8 @@ minute two.
 | | |
 | --- | --- |
 | `scan` | Everything, ranked |
-| `dead` / `dupes` / `drift` | One kind at a time |
+| `dead` / `dupes` / `conflicts` / `drift` | One kind at a time |
+| `trend --days 90` | How the numbers moved over git history |
 | `concepts` | What this codebase is made of |
 | `why <symbol>` | Declared where, called from where, reaches what |
 | `report` / `serve` | HTML file / live UI |
@@ -125,6 +135,24 @@ minute two.
 
 Add `--json` to anything.
 
+## What it understands
+
+Validated against real repositories, because a tool like this is only as good as
+its false-positive rate. Each of these is a pattern that produced a wrong answer
+on a real codebase and is now covered by a regression test:
+
+- code at module scope, which has no enclosing function
+- barrels — `export { x } from`, and `export *`, which names nothing
+- `import * as tags` followed by `tags[key]`, which no graph can trace
+- `this.#private()` calls
+- Node subpath imports (`#supports-color`), across every condition
+- `await import()` and `require()`
+- imports written in `.mdx`, `.vue`, `.svelte` and other files that are never
+  themselves indexed
+- monorepo workspaces, and framework route conventions inside them
+- scripts, benchmarks and examples, which are run rather than imported
+- vendored code, whose unused exports are somebody else's contract
+
 ## Honest limits
 
 - **TypeScript and JavaScript only.** Other languages need their own indexer.
@@ -132,6 +160,9 @@ Add `--json` to anything.
   built at runtime, `require(variable)`. Names that appear in string literals are
   downgraded rather than reported confidently, but a graph will still be wrong
   where a codebase is most confusing. Low confidence means *question*, not fact.
+- **Parallel sets are demoted, not understood.** Sixty translations are
+  recognised as structure rather than redundancy by their shape — one name per
+  file — not because the tool knows what a translation is.
 - **It does not judge whether code is good.** That is out of reach, and attempting
   it would make this a linter with worse ergonomics.
 - **Intent records are only as true as the human who confirmed them.**

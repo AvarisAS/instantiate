@@ -1,0 +1,6 @@
+{
+  "name": "patterns",
+  "private": true,
+  "main": "src/index.ts",
+  "imports": { "#vendored": "./vendor/lib/index.ts" }
+}
