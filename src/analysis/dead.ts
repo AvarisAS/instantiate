@@ -65,17 +65,41 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
     else outgoing.set(edge.from, [edge.to]);
   }
 
-  const reachable = new Set<string>(roots);
-  const queue = [...roots];
-  while (queue.length > 0) {
-    const current = queue.pop()!;
-    for (const next of outgoing.get(current) ?? []) {
-      if (!reachable.has(next)) {
-        reachable.add(next);
-        queue.push(next);
+  const walk = (seeds: Iterable<string>): Set<string> => {
+    const seen = new Set<string>(seeds);
+    const queue = [...seen];
+    while (queue.length > 0) {
+      const current = queue.pop()!;
+      for (const next of outgoing.get(current) ?? []) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
       }
     }
+    return seen;
+  };
+
+  // A class published as part of the API brings its public members with it.
+  // `HTTPError.statusCode` has no caller inside the library precisely because
+  // it exists for consumers, and the publicApi rule already says those exports
+  // are the contract — it simply had not reached inside a class before.
+  const apiRoots = new Set<string>();
+  for (const symbol of graph.symbols.values()) {
+    if (apiFiles.includes(symbol.file) && symbol.exported) apiRoots.add(symbol.id);
   }
+  for (const id of walk(apiRoots)) {
+    const owner = graph.symbols.get(id);
+    if (!owner || owner.kind !== 'class') continue;
+    for (const member of graph.symbols.values()) {
+      if (member.kind !== 'method' || !member.id.startsWith(`${owner.file}#${owner.name}.`)) continue;
+      // Private members are not a contract with anybody.
+      if (member.name.startsWith('#') || member.name.startsWith('_')) continue;
+      roots.add(member.id);
+    }
+  }
+
+  const reachable = walk(roots);
 
   const noEntrypoints = entryFiles.length === 0 && apiFiles.length === 0;
   if (noEntrypoints) {

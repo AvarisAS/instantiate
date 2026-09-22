@@ -168,13 +168,19 @@ function divergentConstants(graph: CodeGraph): Finding[] {
   // this rule mostly false positives. `const DEFAULT_TIMEOUT = 3000` in one
   // file against `30000` in another is the real failure mode: two places each
   // deciding the same thing.
-  const pattern = /\b(?:const|let|var|final|static)?\s*([A-Za-z_$][\w$]*)\s*(?::\s*number\s*)?=\s*(\d{2,})\s*(?:;|$|\n)/gm;
+  // A declaration keyword, or a SCREAMING_SNAKE name, which is a declared
+  // setting by convention. Single digits count here — `DEFAULT_CONCURRENCY = 2`
+  // against `= 1024` is exactly the disagreement worth finding, and requiring
+  // two digits silently excluded it.
+  const pattern =
+    /(?:\b(?:const|let|var|final|static)\s+([A-Za-z_$][\w$]*)|^\s*([A-Z][A-Z0-9_]{2,}))\s*(?::\s*\w+\s*)?=\s*(\d+)\s*(?:;|$)/gm;
 
   for (const [file, text] of sourceFiles(graph)) {
     let match: RegExpExecArray | null;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(text)) !== null) {
-      const name = match[1];
+      const name = match[1] ?? match[2];
+      if (!name) continue;
       const words = splitIdentifier(name);
       // Either it names a concept that should hold one value, or it is a
       // SCREAMING_SNAKE constant, which is a declared setting by convention.
@@ -184,7 +190,7 @@ function divergentConstants(graph: CodeGraph): Finding[] {
       // Key on the whole name, not just the concept word: `retryDelay` and
       // `retryLimit` are different facts that happen to share a word.
       const key = words.join('-');
-      const site: Site = { ...locate(graph, file, text, match.index), value: match[2], raw: match[0].trim() };
+      const site: Site = { ...locate(graph, file, text, match.index), value: match[3], raw: match[0].trim() };
       const list = byConcept.get(key);
       if (list) list.push(site);
       else byConcept.set(key, [site]);

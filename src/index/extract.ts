@@ -72,6 +72,13 @@ export function buildGraph(config: Config): CodeGraph {
  *
  * Both are real edges in the running program, so both are edges here.
  */
+/** Members the language or a host calls implicitly, never by name in source. */
+const PROTOCOL_MEMBERS = new Set([
+  'toString', 'toJSON', 'valueOf', 'toValue', 'then', 'catch', 'finally',
+  'next', 'return', 'throw', 'dispose', 'asyncDispose',
+  'toPrimitive', 'inspect', 'iterator', 'asyncIterator',
+]);
+
 function linkClassMembers(symbols: Map<string, CodeSymbol>, edges: Edge[]): void {
   const methodsOf = new Map<string, Map<string, string>>();
   for (const symbol of symbols.values()) {
@@ -86,12 +93,51 @@ function linkClassMembers(symbols: Map<string, CodeSymbol>, edges: Edge[]): void
     else methodsOf.set(classId, new Map([[name, symbol.id]]));
   }
 
-  // Constructing a class runs its constructor.
+  // Constructing a class runs its constructor, and the runtime calls its
+  // protocol members: `toString` when it is concatenated, `toJSON` when it is
+  // serialised, `then` when it is awaited. Nothing in the source names them.
   for (const [classId, methods] of methodsOf) {
-    const constructor = methods.get('constructor');
     const owner = symbols.get(classId);
-    if (constructor && owner) {
-      edges.push({ from: classId, to: constructor, kind: 'calls', file: owner.file, line: owner.line });
+    if (!owner) continue;
+    for (const [name, memberId] of methods) {
+      const isProtocol =
+        name === 'constructor' ||
+        PROTOCOL_MEMBERS.has(name) ||
+        name.startsWith('[Symbol.') ||
+        (name.startsWith('__') && name.endsWith('__'));
+      if (isProtocol) {
+        edges.push({ from: classId, to: memberId, kind: 'calls', file: owner.file, line: owner.line });
+      }
+    }
+  }
+
+  // A declaration and its implementation.
+  //
+  // A library often describes its API as `declare class H3` in one file while
+  // the real `class H3` lives in another, and a call resolves to whichever the
+  // type system sees — the declaration. The implementation is then reachable
+  // from nothing. Same class name plus same member name in two files is that
+  // pair, so each side reaches the other.
+  const byQualifiedName = new Map<string, string[]>();
+  for (const [classId, methods] of methodsOf) {
+    const className = classId.split('#')[1];
+    for (const [memberName, memberId] of methods) {
+      const key = `${className}.${memberName}`;
+      const list = byQualifiedName.get(key);
+      if (list) list.push(memberId);
+      else byQualifiedName.set(key, [memberId]);
+    }
+  }
+  for (const ids of byQualifiedName.values()) {
+    if (ids.length < 2) continue;
+    const files = new Set(ids.map((id) => id.split('#')[0]));
+    if (files.size < 2) continue; // Overloads in one file, not a second declaration.
+    for (const from of ids) {
+      for (const to of ids) {
+        if (from === to) continue;
+        const owner = symbols.get(from);
+        if (owner) edges.push({ from, to, kind: 'references', file: owner.file, line: owner.line });
+      }
     }
   }
 
@@ -317,11 +363,21 @@ function symbolId(file: string, name: string, container?: string): string {
   return container ? `${file}#${container}.${name}` : `${file}#${name}`;
 }
 
-/** Inside `declare module '…'` or `declare global`. */
+/**
+ * An ambient declaration: inside `declare module`/`declare global`, or carrying
+ * the `declare` modifier itself.
+ *
+ * `declare class H3 { mount(...): void }` describes an API whose implementation
+ * lives elsewhere. Nothing calls the declaration — calls resolve *to* it — so
+ * it can never be reached, and it can never be deleted either.
+ */
 function isAmbient(node: ts.Node): boolean {
-  let current: ts.Node | undefined = node.parent;
+  let current: ts.Node | undefined = node;
   while (current) {
     if (ts.isModuleDeclaration(current)) return true;
+    if (ts.isSourceFile(current)) return current.isDeclarationFile;
+    const modifiers = ts.canHaveModifiers(current) ? ts.getModifiers(current) : undefined;
+    if (modifiers?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword)) return true;
     current = current.parent;
   }
   return false;
@@ -628,6 +684,22 @@ function collectEdges(
     }
   }
 
+  // `this["~request"]()` and `super["~addRoute"]()` name a member with a string,
+  // so there is no identifier to resolve and the member looked unreachable.
+  if (
+    ts.isElementAccessExpression(node) &&
+    ts.isStringLiteralLike(node.argumentExpression) &&
+    enclosing
+  ) {
+    const memberName = node.argumentExpression.text;
+    const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+    for (const id of membersNamed(symbols, memberName)) {
+      if (id !== enclosing) {
+        edges.push({ from: enclosing, to: id, kind: 'calls', file, line: pos.line + 1 });
+      }
+    }
+  }
+
   if (ts.isHeritageClause(node)) {
     const kind = node.token === ts.SyntaxKind.ExtendsKeyword ? 'extends' : 'implements';
     for (const type of node.types) {
@@ -855,6 +927,23 @@ function exportsOf(
   return ids;
 }
 
+/**
+ * Every recorded member with this name.
+ *
+ * A string-keyed access says which member, not which class, so each candidate
+ * counts as reached. Over-approximating is the right side to err on: a false
+ * "alive" costs one missed finding, a false "dead" costs trust in all of them.
+ */
+function membersNamed(symbols: Map<string, CodeSymbol>, name: string): string[] {
+  const out: string[] = [];
+  for (const symbol of symbols.values()) {
+    if (symbol.name === name && (symbol.kind === 'method' || symbol.kind === 'function')) {
+      out.push(symbol.id);
+    }
+  }
+  return out;
+}
+
 /** Walk up to the nearest recorded declaration: the symbol this node lives inside. */
 function enclosingSymbolId(node: ts.Node, declToId: Map<ts.Node, string>): string | undefined {
   let current: ts.Node | undefined = node;
@@ -875,6 +964,15 @@ function resolveToSymbolId(
   checker: ts.TypeChecker,
   declToId: Map<ts.Node, string>,
 ): string | undefined {
+  // `{ readable, writable }` is shorthand for `{ readable: readable }`, and the
+  // checker answers with the *property* symbol rather than the value it stands
+  // for, so every shorthand reference resolved to nothing.
+  if (ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node) {
+    const value = checker.getShorthandAssignmentValueSymbol(node.parent);
+    const id = value ? idOfDeclaration(unalias(value, checker) ?? value, declToId) : undefined;
+    if (id) return id;
+  }
+
   const found = checker.getSymbolAtLocation(node);
   if (!found) return undefined;
   const symbol = unalias(found, checker);
