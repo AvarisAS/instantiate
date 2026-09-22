@@ -63,6 +63,17 @@ export function scan(options: ScanOptions = {}): ScanResult {
 }
 
 /**
+ * Severity has to carry confidence, not just size. A 158-line finding the
+ * analysis is only 27% sure of is not "high" — labelling it so is how a tool
+ * teaches people to ignore its own top line.
+ */
+function withSeverity(finding: Finding): Finding {
+  const impact = finding.score * Math.log2(finding.loc + 2);
+  const severity = impact >= 3.5 ? 'high' : impact >= 1.8 ? 'medium' : 'low';
+  return finding.severity === severity ? finding : { ...finding, severity };
+}
+
+/**
  * The noise budget, applied here rather than in each analysis.
  *
  * A first run that opens with 400 findings is a linter nobody enables. Ranking
@@ -71,7 +82,7 @@ export function scan(options: ScanOptions = {}): ScanResult {
  */
 export function rank(findings: Finding[]): Finding[] {
   return findings
-    .slice()
+    .map(withSeverity)
     .sort((a, b) => {
       // Impact is confidence times size; a confident 200-line deletion beats a
       // speculative one-liner every time.

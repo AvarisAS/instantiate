@@ -34,7 +34,11 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi'> = {
     '**/__generated__/**',
     '**/*.pb.ts',
   ],
-  dupeThreshold: 0.86,
+  // Measured, not guessed: genuine re-implementations of one idea land at 0.81
+  // and above, while the nearest unrelated pair sits below 0.50. The cut-off
+  // goes in that gap, nearer the noise floor, because calibration raises it per
+  // project and nothing can rescue a finding that was never generated.
+  dupeThreshold: 0.72,
   dupeMinLoc: 4,
   maxFindings: 20,
   concepts: 30,

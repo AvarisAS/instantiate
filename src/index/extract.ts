@@ -395,21 +395,10 @@ function exportsOf(
   if (!moduleSymbol) return [];
   const ids: string[] = [];
   for (const exported of checker.getExportsOfModule(moduleSymbol)) {
-    let resolved = exported;
-    if (resolved.flags & ts.SymbolFlags.Alias) {
-      try {
-        resolved = checker.getAliasedSymbol(resolved);
-      } catch {
-        continue;
-      }
-    }
-    for (const decl of resolved.declarations ?? []) {
-      const id = declToId.get(decl) ?? (decl.parent ? declToId.get(decl.parent) : undefined);
-      if (id) {
-        ids.push(id);
-        break;
-      }
-    }
+    const resolved = unalias(exported, checker);
+    if (!resolved) continue;
+    const id = idOfDeclaration(resolved, declToId);
+    if (id) ids.push(id);
   }
   return ids;
 }
@@ -434,22 +423,34 @@ function resolveToSymbolId(
   checker: ts.TypeChecker,
   declToId: Map<ts.Node, string>,
 ): string | undefined {
-  let symbol = checker.getSymbolAtLocation(node);
+  const found = checker.getSymbolAtLocation(node);
+  if (!found) return undefined;
+  const symbol = unalias(found, checker);
   if (!symbol) return undefined;
-  if (symbol.flags & ts.SymbolFlags.Alias) {
-    try {
-      symbol = checker.getAliasedSymbol(symbol);
-    } catch {
-      return undefined; // Unresolvable alias (missing dependency); not our problem to report.
-    }
-  }
+  return idOfDeclaration(symbol, declToId);
+}
+
+/**
+ * A symbol's declaration, mapped to the id we recorded for it.
+ *
+ * The method's id is keyed on the declaration node itself, so the parent is
+ * tried too: a variable declaration wrapping an arrow function is recorded
+ * against the declaration, not the function expression.
+ */
+function idOfDeclaration(symbol: ts.Symbol, declToId: Map<ts.Node, string>): string | undefined {
   for (const decl of symbol.declarations ?? []) {
-    const id = declToId.get(decl);
+    const id = declToId.get(decl) ?? (decl.parent ? declToId.get(decl.parent) : undefined);
     if (id) return id;
-    // A method's id is keyed on the declaration node itself; also try the parent
-    // for cases like a variable declaration wrapping an arrow function.
-    const parentId = decl.parent ? declToId.get(decl.parent) : undefined;
-    if (parentId) return parentId;
   }
   return undefined;
+}
+
+/** Follow an alias to the symbol it actually names. */
+function unalias(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Symbol | undefined {
+  if (!(symbol.flags & ts.SymbolFlags.Alias)) return symbol;
+  try {
+    return checker.getAliasedSymbol(symbol);
+  } catch {
+    return undefined; // Unresolvable alias (a missing dependency); not ours to report.
+  }
 }

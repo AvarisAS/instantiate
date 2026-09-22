@@ -2,6 +2,9 @@ import type { CodeGraph, Finding, CodeSymbol } from '../types.js';
 import type { Config } from '../config.js';
 import { matchesAny } from '../util/glob.js';
 
+/** Findings below this confidence are shown, but do not count towards the budget. */
+const METRIC_CONFIDENCE_FLOOR = 0.5;
+
 export interface DeadResult {
   findings: Finding[];
   reachable: Set<string>;
@@ -62,8 +65,10 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
     if (reachable.has(symbol.id)) continue;
     if (symbol.kind === 'module') continue;
 
-    deadLoc += symbol.loc;
     const score = confidence(symbol, dynamicNames);
+    // Same rule as duplicates: the headline number, and therefore the CI budget,
+    // only counts what we would stand behind.
+    if (score >= METRIC_CONFIDENCE_FLOOR) deadLoc += symbol.loc;
     findings.push({
       id: `dead:${symbol.id}`,
       kind: 'dead',

@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>instantiate — instantiate</title>
+<style>
+:root {
+  --bg: #fbfaf8; --panel: #ffffff; --ink: #1a1a19; --muted: #6b6a66;
+  --line: #e4e2dd; --accent: #2f6f4f;
+  --high: #b4432c; --medium: #b8862f; --low: #8a8880;
+  --heat0: #e8e6e1; --heat1: #b4432c;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, sans-serif;
+}
+:root:not([data-theme="light"]) { }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141414; --panel: #1c1c1b; --ink: #ecebe7; --muted: #918f88;
+    --line: #2e2e2c; --accent: #6bbd8f;
+    --high: #e0705a; --medium: #d9a441; --low: #7d7b74;
+    --heat0: #262625; --heat1: #e0705a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141414; --panel: #1c1c1b; --ink: #ecebe7; --muted: #918f88;
+  --line: #2e2e2c; --accent: #6bbd8f;
+  --high: #e0705a; --medium: #d9a441; --low: #7d7b74;
+  --heat0: #262625; --heat1: #e0705a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 15px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+#app { max-width: 1100px; margin: 0 auto; padding: 40px 16px 120px; }
+h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; font-weight: 600; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em;
+     color: var(--muted); font-weight: 600; margin: 56px 0 6px; }
+.sub { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+.lede { color: var(--muted); font-size: 14px; margin: 0 0 20px; max-width: 62ch; }
+
+.headline { display: flex; flex-wrap: wrap; gap: 10px; margin: 28px 0 8px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+        padding: 14px 18px; flex: 1 1 150px; }
+.tile .n { font-size: 26px; font-weight: 600; letter-spacing: -0.02em;
+           font-variant-numeric: tabular-nums; display: block; }
+.tile .l { font-size: 12px; color: var(--muted); }
+
+.warn { background: var(--panel); border: 1px solid var(--medium); border-left-width: 3px;
+        border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 14px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+         padding: 16px; overflow: hidden; }
+svg { display: block; width: 100%; height: auto; }
+.box { stroke: var(--bg); stroke-width: 1; cursor: pointer; }
+.box:hover { stroke: var(--accent); stroke-width: 2; }
+.box-label { font-family: var(--mono); font-size: 9px; fill: var(--ink);
+             pointer-events: none; opacity: 0.75; }
+.dir-label { font-family: var(--sans); font-size: 10px; fill: var(--muted);
+             pointer-events: none; font-weight: 600; }
+.concept { cursor: pointer; }
+.concept circle { fill: var(--accent); fill-opacity: 0.14; stroke: var(--accent); stroke-width: 1.5; }
+.concept:hover circle { fill-opacity: 0.3; }
+.concept text { font-size: 11px; fill: var(--ink); text-anchor: middle; pointer-events: none; }
+.concept .loc { font-size: 9px; fill: var(--muted); }
+.edge { stroke: var(--muted); stroke-opacity: 0.25; fill: none; }
+
+.finding { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+           margin: 8px 0; overflow: hidden; }
+.finding summary { padding: 13px 16px; cursor: pointer; display: flex; gap: 12px;
+                   align-items: baseline; list-style: none; }
+.finding summary::-webkit-details-marker { display: none; }
+.finding summary:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.sev { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700;
+       flex: 0 0 52px; padding-top: 2px; }
+.sev.high { color: var(--high); } .sev.medium { color: var(--medium); } .sev.low { color: var(--low); }
+.f-title { flex: 1 1 auto; font-weight: 500; }
+.f-meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+          font-family: var(--mono); flex: 0 0 auto; }
+.f-body { padding: 0 16px 16px; border-top: 1px solid var(--line); }
+.f-detail { color: var(--muted); font-size: 14px; margin: 12px 0; max-width: 70ch; }
+
+.snips { display: grid; gap: 10px; grid-template-columns: 1fr; }
+.snips.side-by-side { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+pre { margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px;
+      line-height: 1.5; }
+pre .ln { color: var(--muted); opacity: 0.55; user-select: none; display: inline-block;
+          width: 3ch; text-align: right; margin-right: 10px; }
+.snip-head { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 0 0 4px; }
+
+.bars { display: grid; gap: 4px; margin: 12px 0; }
+.bar-row { display: grid; grid-template-columns: minmax(110px, 160px) 1fr 44px; gap: 10px;
+           align-items: center; font-size: 12.5px; }
+.bar-track { height: 9px; background: var(--heat0); border-radius: 5px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 5px; }
+.bar-row.minor .bar-fill { background: var(--medium); }
+.bar-num { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: right; }
+
+.filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 4px; }
+.filters button { background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+                  border-radius: 999px; padding: 5px 13px; font-size: 12.5px; cursor: pointer;
+                  font-family: inherit; }
+.filters button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
+                                       background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.crumb { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 10px 0 0;
+         min-height: 18px; }
+.crumb button { background: none; border: none; color: var(--accent); cursor: pointer;
+                font: inherit; padding: 0; text-decoration: underline; }
+.legend { display: flex; gap: 14px; align-items: center; color: var(--muted);
+          font-size: 11.5px; margin-top: 10px; flex-wrap: wrap; }
+.swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+          vertical-align: -1px; margin-right: 5px; }
+footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line);
+         color: var(--muted); font-size: 12.5px; }
+@media (max-width: 640px) {
+  #app { padding: 24px 16px 80px; }
+  h1 { font-size: 22px; }
+  .finding summary { flex-wrap: wrap; gap: 6px 10px; }
+  .bar-row { grid-template-columns: 96px 1fr 40px; }
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script id="data" type="application/json">{"title":"instantiate","generatedAt":"2026-09-22 07:27","stats":{"files":23,"symbols":166,"edges":994,"loc":3415,"deadLoc":2,"duplicateLoc":0,"driftCount":2,"indexMs":353,"analyseMs":30},"warnings":[],"treemap":[{"name":"src","path":"src","x":0,"y":0,"w":956.4,"h":560,"depth":1,"leaf":false,"heat":0.002,"value":3266,"findings":5},{"name":"analysis","path":"src/analysis","x":1,"y":16,"w":282.3,"h":543,"depth":2,"leaf":false,"heat":0,"value":966,"findings":0},{"name":"dupes.ts","path":"src/analysis/dupes.ts","x":2,"y":32,"w":147.3,"h":254.8,"depth":3,"leaf":true,"heat":0,"value":246,"findings":0},{"name":"concepts.ts","path":"src/analysis/concepts.ts","x":149.3,"y":32,"w":133,"h":254.8,"depth":3,"leaf":true,"heat":0,"value":222,"findings":0},{"name":"drift.ts","path":"src/analysis/drift.ts","x":2,"y":286.8,"w":168.3,"h":138.8,"depth":3,"leaf":true,"heat":0,"value":153,"findings":0},{"name":"similarity.ts","path":"src/analysis/similarity.ts","x":2,"y":425.6,"w":168.3,"h":132.4,"depth":3,"leaf":true,"heat":0,"value":146,"findings":0},{"name":"dead.ts","path":"src/analysis/dead.ts","x":170.3,"y":286.8,"w":112,"h":177.1,"depth":3,"leaf":true,"heat":0,"value":130,"findings":0},{"name":"budget.ts","path":"src/analysis/budget.ts","x":170.3,"y":464,"w":112,"h":94,"depth":3,"leaf":true,"heat":0,"value":69,"findings":0},{"name":"report","path":"src/report","x":283.3,"y":16,"w":266.5,"h":543,"depth":2,"leaf":false,"heat":0,"value":912,"findings":0},{"name":"html.ts","path":"src/report/html.ts","x":284.3,"y":32,"w":264.5,"h":317.8,"depth":3,"leaf":true,"heat":0,"value":551,"findings":0},{"name":"treemap.ts","path":"src/report/treemap.ts","x":284.3,"y":349.8,"w":129.7,"h":208.2,"depth":3,"leaf":true,"heat":0,"value":177,"findings":0},{"name":"why.ts","path":"src/report/why.ts","x":414,"y":349.8,"w":134.8,"h":104.1,"depth":3,"leaf":true,"heat":0,"value":92,"findings":0},{"name":"terminal.ts","path":"src/report/terminal.ts","x":414,"y":453.9,"w":92.3,"h":104.1,"depth":3,"leaf":true,"heat":0,"value":63,"findings":0},{"name":"snippets.ts","path":"src/report/snippets.ts","x":506.3,"y":453.9,"w":42.5,"h":104.1,"depth":3,"leaf":true,"heat":0,"value":29,"findings":0},{"name":"index","path":"src/index","x":549.8,"y":16,"w":271.6,"h":266.4,"depth":2,"leaf":false,"heat":0,"value":456,"findings":0},{"name":"extract.ts","path":"src/index/extract.ts","x":550.8,"y":32,"w":269.6,"h":249.4,"depth":3,"leaf":true,"heat":0,"value":456,"findings":0},{"name":"cli.ts","path":"src/cli.ts","x":821.4,"y":16,"w":134,"h":266.4,"depth":2,"leaf":true,"heat":0,"value":225,"findings":0},{"name":"intent","path":"src/intent","x":549.8,"y":282.4,"w":210.5,"h":162,"depth":2,"leaf":false,"heat":0.007,"value":215,"findings":1},{"name":"command.ts","path":"src/intent/command.ts","x":550.8,"y":298.4,"w":129,"h":145,"depth":3,"leaf":true,"heat":0,"value":133,"findings":0},{"name":"store.ts","path":"src/intent/store.ts","x":679.8,"y":298.4,"w":79.5,"h":145,"depth":3,"leaf":true,"heat":0.018,"value":82,"findings":1},{"name":"config.ts","path":"src/config.ts","x":549.8,"y":444.4,"w":210.5,"h":114.6,"depth":2,"leaf":true,"heat":0.016,"value":152,"findings":2},{"name":"types.ts","path":"src/types.ts","x":760.3,"y":282.4,"w":195.1,"h":104.9,"depth":2,"leaf":true,"heat":0,"value":129,"findings":0},{"name":"api.ts","path":"src/api.ts","x":760.3,"y":387.4,"w":106.3,"h":171.6,"depth":2,"leaf":true,"heat":0,"value":115,"findings":0},{"name":"util","path":"src/util","x":866.6,"y":387.4,"w":88.7,"h":171.6,"depth":2,"leaf":false,"heat":0.012,"value":96,"findings":2},{"name":"glob.ts","path":"src/util/glob.ts","x":867.6,"y":403.4,"w":86.7,"h":111.2,"depth":3,"leaf":true,"heat":0,"value":69,"findings":0},{"name":"term.ts","path":"src/util/term.ts","x":867.6,"y":514.5,"w":86.7,"h":43.5,"depth":3,"leaf":true,"heat":0.044,"value":27,"findings":2},{"name":"test","path":"test","x":956.4,"y":0,"w":43.6,"h":560,"depth":1,"leaf":false,"heat":0,"value":149,"findings":0},{"name":"treemap.test.ts","path":"test/treemap.test.ts","x":957.4,"y":16,"w":41.6,"h":222.3,"depth":2,"leaf":true,"heat":0,"value":61,"findings":0},{"name":"similarity.test.ts","path":"test/similarity.test.ts","x":957.4,"y":238.3,"w":41.6,"h":207.7,"depth":2,"leaf":true,"heat":0,"value":57,"findings":0},{"name":"glob.test.ts","path":"test/glob.test.ts","x":957.4,"y":446,"w":41.6,"h":113,"depth":2,"leaf":true,"heat":0,"value":31,"findings":0}],"concepts":[{"id":0,"name":"Analysis · Find","description":"55 symbols across 11 files, 23 exported.","symbols":["src/types.ts#SymbolKind","src/types.ts#CodeSymbol","src/types.ts#EdgeKind","src/types.ts#Edge","src/types.ts#CodeGraph","src/types.ts#Concept","src/types.ts#Budget","src/analysis/budget.ts#budgetPath","src/analysis/budget.ts#readBudget","src/analysis/budget.ts#checkBudget","src/analysis/similarity.ts#Bag","src/analysis/similarity.ts#KEYWORDS","src/analysis/similarity.ts#STOPWORDS","src/analysis/similarity.ts#ABBREVIATIONS","src/analysis/similarity.ts#SHINGLE","src/analysis/similarity.ts#structuralBag","src/analysis/similarity.ts#vocabularyBag","src/analysis/similarity.ts#splitIdentifier","src/analysis/similarity.ts#stem","src/analysis/similarity.ts#tokenise","src/analysis/similarity.ts#cosine","src/analysis/similarity.ts#normCache","src/analysis/similarity.ts#norm","src/analysis/concepts.ts#findConcepts","src/analysis/concepts.ts#dirOf","src/analysis/concepts.ts#build","src/analysis/concepts.ts#nameOf","src/analysis/concepts.ts#title","src/analysis/concepts.ts#describe","src/analysis/concepts.ts#assignCoupling","src/util/glob.ts#matchesAny","src/analysis/dead.ts#findDeadCode","src/analysis/dead.ts#collectDynamicNames","src/analysis/dead.ts#confidence","src/analysis/dead.ts#buildDetail","src/analysis/drift.ts#Dialect","src/analysis/drift.ts#Category","src/analysis/drift.ts#CATEGORIES","src/analysis/drift.ts#findDrift","src/analysis/dupes.ts#Candidate","src/analysis/dupes.ts#DupeCluster","src/analysis/dupes.ts#DupeResult","src/analysis/dupes.ts#STRUCTURE_WEIGHT","src/analysis/dupes.ts#findDuplicates","src/analysis/dupes.ts#similarity","src/analysis/dupes.ts#Pair","src/analysis/dupes.ts#scorePairs","src/analysis/dupes.ts#cluster","src/analysis/dupes.ts#rankScore","src/analysis/dupes.ts#describe","src/report/why.ts#renderWhy","src/report/why.ts#shortName","src/report/html.ts#placeConcepts","src/intent/command.ts#loadBearing","src/intent/command.ts#describeShape"],"loc":915,"couples":[{"to":1,"weight":32},{"to":2,"weight":18},{"to":4,"weight":6},{"to":5,"weight":3}],"x":320,"y":185.2,"r":62},{"id":1,"name":"Snippet Render","description":"42 symbols across 10 files, 20 exported.","symbols":["src/types.ts#FindingKind","src/types.ts#Severity","src/types.ts#Finding","src/types.ts#Stats","src/analysis/budget.ts#writeBudget","src/api.ts#ScanResult","src/api.ts#rank","src/util/term.ts#dim","src/util/term.ts#bar","src/util/term.ts#plural","src/report/terminal.ts#renderSummary","src/report/terminal.ts#renderFindings","src/report/why.ts#Ref","src/report/why.ts#dedupe","src/report/why.ts#section","src/report/treemap.ts#TreeNode","src/report/treemap.ts#LaidOut","src/report/treemap.ts#Rect","src/report/treemap.ts#layout","src/report/treemap.ts#Scaled","src/report/treemap.ts#squarify","src/report/treemap.ts#worstRatio","src/report/treemap.ts#treeFromPaths","src/report/treemap.ts#rollUp","src/report/snippets.ts#Snippet","src/report/snippets.ts#MAX_LINES","src/report/snippets.ts#cache","src/report/snippets.ts#snippet","src/report/html.ts#renderHtmlReport","src/report/html.ts#ReportData","src/report/html.ts#SerialisedBox","src/report/html.ts#TREEMAP_WIDTH","src/report/html.ts#TREEMAP_HEIGHT","src/report/html.ts#buildData","src/report/html.ts#flatten","src/report/html.ts#round","src/report/html.ts#snippetsFor","src/report/html.ts#escapeHtml","src/report/html.ts#escapeJson","src/report/html.ts#STYLE","src/report/html.ts#SCRIPT","test/treemap.test.ts#leaves"],"loc":825,"couples":[{"to":2,"weight":23},{"to":0,"weight":11},{"to":5,"weight":2}],"x":205.2,"y":224.9,"r":59.9},{"id":2,"name":"Config Dismissal","description":"35 symbols across 11 files, 20 exported.","symbols":["src/types.ts#FileRecord","src/types.ts#AnalysisResult","src/analysis/budget.ts#BudgetCheck","src/config.ts#Config","src/config.ts#DEFAULTS","src/config.ts#CONFIG_NAMES","src/config.ts#detectEntrypoints","src/config.ts#sourceOf","src/config.ts#collectExports","src/config.ts#unique","src/config.ts#loadConfig","src/config.ts#describeConfig","src/config.ts#relPath","src/analysis/dead.ts#DeadResult","src/analysis/drift.ts#DriftResult","src/analysis/dupes.ts#calibrate","src/index/extract.ts#buildGraph","src/index/extract.ts#createProgram","src/index/extract.ts#discoverFiles","src/index/extract.ts#countLines","src/api.ts#ScanOptions","src/api.ts#scan","src/api.ts#DismissalStore","src/api.ts#loadDismissals","src/api.ts#saveDismissals","src/api.ts#applyDismissals","src/util/term.ts#bold","src/util/term.ts#green","src/util/term.ts#cyan","src/intent/command.ts#USAGE","src/cli.ts#HELP","src/cli.ts#Args","src/cli.ts#parseArgs","src/cli.ts#visible","src/cli.ts#main"],"loc":577,"couples":[{"to":0,"weight":31},{"to":1,"weight":30},{"to":5,"weight":5},{"to":3,"weight":2},{"to":4,"weight":1}],"x":449.7,"y":215.2,"r":53.4},{"id":3,"name":"Index · Id","description":"12 symbols across 1 file, 0 exported.","symbols":["src/index/extract.ts#symbolId","src/index/extract.ts#isExported","src/index/extract.ts#signatureOf","src/index/extract.ts#normaliseBody","src/index/extract.ts#record","src/index/extract.ts#isModuleScope","src/index/extract.ts#collectDeclarations","src/index/extract.ts#collectEdges","src/index/extract.ts#resolveModule","src/index/extract.ts#exportsOf","src/index/extract.ts#enclosingSymbolId","src/index/extract.ts#resolveToSymbolId"],"loc":311,"couples":[{"to":0,"weight":5},{"to":2,"weight":1}],"x":138.5,"y":334,"r":44.5},{"id":4,"name":"Intent · Command","description":"11 symbols across 3 files, 11 exported.","symbols":["src/types.ts#IntentRecord","src/intent/store.ts#IntentStore","src/intent/store.ts#IntentStore.constructor","src/intent/store.ts#IntentStore.load","src/intent/store.ts#IntentStore.save","src/intent/store.ts#IntentStore.get","src/intent/store.ts#IntentStore.set","src/intent/store.ts#IntentStore.confirm","src/intent/store.ts#IntentStore.all","src/intent/store.ts#IntentStore.search","src/intent/command.ts#runIntentCommand"],"loc":227,"couples":[{"to":2,"weight":13},{"to":0,"weight":10},{"to":1,"weight":7},{"to":5,"weight":1}],"x":507.8,"y":335.1,"r":40.9},{"id":5,"name":"Util · Exp","description":"9 symbols across 2 files, 6 exported.","symbols":["src/util/glob.ts#cache","src/util/glob.ts#globToRegExp","src/util/term.ts#enabled","src/util/term.ts#wrap","src/util/term.ts#red","src/util/term.ts#yellow","src/util/term.ts#blue","src/util/term.ts#magenta","src/util/term.ts#severityColour"],"loc":67,"couples":[{"to":1,"weight":1}],"x":231.1,"y":451.4,"r":31.4},{"id":6,"name":"Test · Combin","description":"2 symbols across 1 file, 0 exported.","symbols":["test/similarity.test.ts#combined","test/similarity.test.ts#score"],"loc":6,"couples":[{"to":0,"weight":4}],"x":410.9,"y":454.8,"r":23.4}],"findings":[{"id":"drift:errors","kind":"drift","severity":"high","title":"error handling is done 2 different ways","detail":"null return on failure 50%, silent catch 50%. No convention has won, so each new change picks one at random.","file":"src/config.ts","line":49,"symbols":["src/config.ts#detectEntrypoints","src/intent/store.ts#IntentStore","src/intent/store.ts#IntentStore.load"],"loc":3,"score":0.5,"evidence":{"category":"error handling","dominant":"null return on failure","dominantShare":0.5,"breakdown":[{"dialect":"null return on failure","count":3,"share":0.5},{"dialect":"silent catch","count":3,"share":0.5}],"deviants":[{"dialect":"silent catch","id":"src/config.ts#detectEntrypoints","file":"src/config.ts","line":49,"name":"detectEntrypoints"},{"dialect":"silent catch","id":"src/intent/store.ts#IntentStore","file":"src/intent/store.ts","line":13,"name":"IntentStore"},{"dialect":"silent catch","id":"src/intent/store.ts#IntentStore.load","file":"src/intent/store.ts","line":22,"name":"load"}]},"snippets":[{"file":"src/config.ts","startLine":48,"lines":[" */","export function detectEntrypoints(root: string): { entrypoints: string[]; publicApi: string[] } {","  const entrypoints: string[] = [];","  const publicApi: string[] = [];","  const pkgPath = join(root, 'package.json');","","  if (existsSync(pkgPath)) {","    try {"]},{"file":"src/intent/store.ts","startLine":12,"lines":[" */","export class IntentStore {","  private readonly path: string;","  private records = new Map\u003cstring, IntentRecord\u003e();","","  constructor(private readonly root: string) {","    this.path = join(root, '.instantiate', 'intent.json');","    this.load();"]},{"file":"src/intent/store.ts","startLine":21,"lines":["","  private load(): void {","    if (!existsSync(this.path)) return;","    try {","      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as IntentRecord[];","      for (const record of raw) this.records.set(record.symbol, record);","    } catch {","      // A corrupt store must not stop a scan; it is an overlay, not the source."]}]},{"id":"drift:validation","kind":"drift","severity":"high","title":"input validation is done 2 different ways","detail":"truthiness check 67%, manual typeof guard 33%. No convention has won, so each new change picks one at random.","file":"src/config.ts","line":49,"symbols":["src/config.ts#detectEntrypoints","src/config.ts#collectExports"],"loc":2,"score":0.5,"evidence":{"category":"input validation","dominant":"truthiness check","dominantShare":0.67,"breakdown":[{"dialect":"truthiness check","count":4,"share":0.667},{"dialect":"manual typeof guard","count":2,"share":0.333}],"deviants":[{"dialect":"manual typeof guard","id":"src/config.ts#detectEntrypoints","file":"src/config.ts","line":49,"name":"detectEntrypoints"},{"dialect":"manual typeof guard","id":"src/config.ts#collectExports","file":"src/config.ts","line":101,"name":"collectExports"}]},"snippets":[{"file":"src/config.ts","startLine":48,"lines":[" */","export function detectEntrypoints(root: string): { entrypoints: string[]; publicApi: string[] } {","  const entrypoints: string[] = [];","  const publicApi: string[] = [];","  const pkgPath = join(root, 'package.json');","","  if (existsSync(pkgPath)) {","    try {"]},{"file":"src/config.ts","startLine":100,"lines":["","function collectExports(node: unknown, out: string[]): void {","  if (typeof node === 'string') {","    out.push(sourceOf(node));","    return;","  }","  if (node \u0026\u0026 typeof node === 'object') {","    for (const value of Object.values(node as Record\u003cstring, unknown\u003e)) collectExports(value, out);"]}]},{"id":"dead:src/util/term.ts#blue","kind":"dead","severity":"low","title":"blue is never reached","detail":"No path reaches this variable from any entrypoint. It is exported, so a consumer outside this repo may still use it.","file":"src/util/term.ts","line":10,"symbols":["src/util/term.ts#blue"],"loc":1,"score":0.6,"evidence":{"kind":"variable","exported":true,"nameAppearsInString":false},"snippets":[{"file":"src/util/term.ts","startLine":10,"lines":["export const blue = wrap('34');"]}]},{"id":"dead:src/util/term.ts#magenta","kind":"dead","severity":"low","title":"magenta is never reached","detail":"No path reaches this variable from any entrypoint. It is exported, so a consumer outside this repo may still use it.","file":"src/util/term.ts","line":11,"symbols":["src/util/term.ts#magenta"],"loc":1,"score":0.6,"evidence":{"kind":"variable","exported":true,"nameAppearsInString":false},"snippets":[{"file":"src/util/term.ts","startLine":11,"lines":["export const magenta = wrap('35');"]}]}],"fileFindings":{"src/config.ts":["drift:errors","drift:validation"],"src/util/term.ts":["dead:src/util/term.ts#blue","dead:src/util/term.ts#magenta"],"src/intent/store.ts":["drift:errors"]}}</script>
+<script>
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const app = document.getElementById('app');
+let filter = 'all';
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const heatColour = (heat) => {
+  if (heat <= 0.001) return 'var(--heat0)';
+  // Opacity rather than a gradient: it reads correctly in both themes.
+  return 'color-mix(in srgb, var(--heat1) ' + Math.round(18 + heat * 82) + '%, var(--heat0))';
+};
+
+function treemap() {
+  const boxes = DATA.treemap;
+  if (!boxes.length) return '<p class="lede">Nothing indexed.</p>';
+
+  const dirs = boxes.filter((b) => !b.leaf);
+  const leaves = boxes.filter((b) => b.leaf);
+
+  const parts = ['<svg viewBox="0 0 1000 560" role="img" aria-label="Map of the codebase by file size and findings">'];
+
+  for (const b of dirs) {
+    parts.push('<rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h +
+      '" fill="none" stroke="var(--line)" rx="3"/>');
+    if (b.h > 22 && b.w > 40) {
+      parts.push('<text class="dir-label" x="' + (b.x + 4) + '" y="' + (b.y + 11) + '">' +
+        esc(b.name) + '</text>');
+    }
+  }
+
+  for (const b of leaves) {
+    parts.push('<rect class="box" data-path="' + esc(b.path) + '" x="' + b.x + '" y="' + b.y +
+      '" width="' + b.w + '" height="' + b.h + '" rx="2" fill="' + heatColour(b.heat) + '">' +
+      '<title>' + esc(b.path) + '\n' + b.value + ' lines' +
+      (b.findings ? ' · ' + b.findings + ' finding' + (b.findings === 1 ? '' : 's') : ' · clean') +
+      '</title></rect>');
+    if (b.w > 46 && b.h > 13) {
+      const chars = Math.floor((b.w - 6) / 5);
+      const label = b.name.length > chars ? b.name.slice(0, Math.max(1, chars - 1)) + '…' : b.name;
+      parts.push('<text class="box-label" x="' + (b.x + 3) + '" y="' + (b.y + 10) + '">' +
+        esc(label) + '</text>');
+    }
+  }
+
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+function conceptMap() {
+  const cs = DATA.concepts;
+  if (cs.length < 2) return '<p class="lede">Too few symbols to cluster.</p>';
+  const byId = new Map(cs.map((c) => [c.id, c]));
+  const parts = ['<svg viewBox="0 0 640 600" role="img" aria-label="Concepts in this codebase and how they depend on each other">'];
+
+  const maxWeight = Math.max(1, ...cs.flatMap((c) => c.couples.map((k) => k.weight)));
+  for (const c of cs) {
+    for (const link of c.couples.slice(0, 3)) {
+      const t = byId.get(link.to);
+      if (!t) continue;
+      parts.push('<line class="edge" x1="' + c.x + '" y1="' + c.y + '" x2="' + t.x + '" y2="' + t.y +
+        '" stroke-width="' + (0.5 + (link.weight / maxWeight) * 3).toFixed(2) + '"/>');
+    }
+  }
+
+  for (const c of cs) {
+    parts.push('<g class="concept" data-concept="' + c.id + '">' +
+      '<circle cx="' + c.x + '" cy="' + c.y + '" r="' + c.r + '"/>' +
+      '<text x="' + c.x + '" y="' + (c.y - 1) + '">' + esc(c.name) + '</text>' +
+      '<text class="loc" x="' + c.x + '" y="' + (c.y + 12) + '">' + c.loc + ' lines</text>' +
+      '<title>' + esc(c.name) + '\n' + esc(c.description) + '</title></g>');
+  }
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+function snippetHtml(s) {
+  const lines = s.lines.map((line, i) =>
+    '<span class="ln">' + (s.startLine + i) + '</span>' + esc(line)).join('\n');
+  return '<div><p class="snip-head">' + esc(s.file) + ':' + s.startLine + '</p><pre>' + lines + '</pre></div>';
+}
+
+function driftBars(f) {
+  const rows = (f.evidence && f.evidence.breakdown) || [];
+  if (!rows.length) return '';
+  // Small multiples: the proportions make the argument on their own.
+  return '<div class="bars">' + rows.map((r, i) =>
+    '<div class="bar-row' + (i === 0 ? '' : ' minor') + '">' +
+      '<span>' + esc(r.dialect) + '</span>' +
+      '<span class="bar-track"><span class="bar-fill" style="width:' +
+        Math.round(r.share * 100) + '%"></span></span>' +
+      '<span class="bar-num">' + Math.round(r.share * 100) + '%</span>' +
+    '</div>').join('') + '</div>';
+}
+
+function findingHtml(f) {
+  const sideBySide = f.kind === 'duplicate' && f.snippets.length > 1;
+  return '<details class="finding" id="' + esc(f.id) + '" data-kind="' + f.kind + '">' +
+    '<summary>' +
+      '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
+      '<span class="f-title">' + esc(f.title) + '</span>' +
+      '<span class="f-meta">' + f.loc + 'L · ' + Math.round(f.score * 100) + '%</span>' +
+    '</summary>' +
+    '<div class="f-body">' +
+      '<p class="f-detail">' + esc(f.detail) + '</p>' +
+      (f.kind === 'drift' ? driftBars(f) : '') +
+      '<div class="snips' + (sideBySide ? ' side-by-side' : '') + '">' +
+        f.snippets.map(snippetHtml).join('') +
+      '</div>' +
+    '</div>' +
+  '</details>';
+}
+
+function findingsSection() {
+  const all = DATA.findings;
+  const list = filter === 'all' ? all : all.filter((f) => f.kind === filter);
+  const counts = { all: all.length };
+  for (const f of all) counts[f.kind] = (counts[f.kind] || 0) + 1;
+
+  const tabs = ['all', 'dead', 'duplicate', 'drift']
+    .filter((k) => k === 'all' || counts[k])
+    .map((k) => '<button data-filter="' + k + '" aria-pressed="' + (filter === k) + '">' +
+      k + ' <span class="bar-num">' + (counts[k] || 0) + '</span></button>').join('');
+
+  return '<div class="filters">' + tabs + '</div>' +
+    '<p class="crumb" id="crumb"></p>' +
+    (list.length
+      ? list.map(findingHtml).join('')
+      : '<p class="lede">Nothing here. That is the good outcome.</p>');
+}
+
+function render() {
+  const s = DATA.stats;
+  const clean = s.loc > 0 ? (1 - (s.deadLoc + s.duplicateLoc) / s.loc) * 100 : 100;
+
+  app.innerHTML =
+    '<h1>' + esc(DATA.title) + '</h1>' +
+    '<p class="sub">' + DATA.generatedAt + ' · ' + s.files + ' files · ' +
+      s.symbols + ' symbols · ' + s.loc.toLocaleString('en-GB') + ' lines</p>' +
+
+    DATA.warnings.map((w) => '<p class="warn">' + esc(w) + '</p>').join('') +
+
+    '<div class="headline">' +
+      '<div class="tile"><span class="n">' + clean.toFixed(1) + '%</span>' +
+        '<span class="l">load-bearing</span></div>' +
+      '<div class="tile"><span class="n">' + s.deadLoc.toLocaleString('en-GB') + '</span>' +
+        '<span class="l">lines nothing reaches</span></div>' +
+      '<div class="tile"><span class="n">' + s.duplicateLoc.toLocaleString('en-GB') + '</span>' +
+        '<span class="l">lines of re-implementation</span></div>' +
+      '<div class="tile"><span class="n">' + s.driftCount + '</span>' +
+        '<span class="l">conventions done two ways</span></div>' +
+    '</div>' +
+
+    '<h2>The map</h2>' +
+    '<p class="lede">Every file, sized by lines and shaded by how much of it is implicated ' +
+      'in a finding. Click a file to see what is wrong with it.</p>' +
+    '<div class="panel">' + treemap() + '</div>' +
+    '<p class="legend">' +
+      '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
+      '<span><span class="swatch" style="background:' + heatColour(0.5) + '"></span>some findings</span>' +
+      '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
+      '<span>box size = lines of code</span>' +
+    '</p>' +
+
+    '<h2>What this codebase is made of</h2>' +
+    '<p class="lede">The graph collapsed into ' + DATA.concepts.length + ' groups, sized by lines, ' +
+      'linked where one depends on another. Larger groups sit nearer the centre.</p>' +
+    '<div class="panel">' + conceptMap() + '</div>' +
+
+    '<h2>What to do about it</h2>' +
+    '<p class="lede">Ranked by confidence times size: the top of this list is where deleting ' +
+      'or merging buys the most understanding for the least risk.</p>' +
+    '<div id="findings">' + findingsSection() + '</div>' +
+
+    '<footer>Generated by <strong>instantiate</strong>. ' +
+      'A static graph cannot see dynamic dispatch, so treat low-confidence findings as questions, ' +
+      'not facts.</footer>';
+}
+
+app.addEventListener('click', (event) => {
+  const tab = event.target.closest('[data-filter]');
+  if (tab) {
+    filter = tab.dataset.filter;
+    document.getElementById('findings').innerHTML = findingsSection();
+    return;
+  }
+
+  const box = event.target.closest('[data-path]');
+  if (box) {
+    // Zoom, not lateral wander: a click always lands on the findings for that
+    // file, and the breadcrumb says where you are and how to get back.
+    const ids = DATA.fileFindings[box.dataset.path] || [];
+    const crumb = document.getElementById('crumb');
+    filter = 'all';
+    document.getElementById('findings').innerHTML = findingsSection();
+    const target = ids.map((id) => document.getElementById(id)).find(Boolean);
+    const c = document.getElementById('crumb');
+    if (target) {
+      target.open = true;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      c.innerHTML = box.dataset.path + ' — ' + ids.length + ' finding' +
+        (ids.length === 1 ? '' : 's') + ' · <button data-clear>show everything</button>';
+    } else {
+      c.innerHTML = box.dataset.path + ' — clean · <button data-clear>show everything</button>';
+    }
+    return;
+  }
+
+  const concept = event.target.closest('[data-concept]');
+  if (concept) {
+    const c = DATA.concepts[Number(concept.dataset.concept)];
+    if (c) {
+      document.getElementById('crumb').innerHTML = esc(c.name) + ' — ' + esc(c.description) +
+        ' · <button data-clear>show everything</button>';
+      document.getElementById('crumb').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return;
+  }
+
+  if (event.target.closest('[data-clear]')) {
+    document.getElementById('crumb').textContent = '';
+  }
+});
+
+render();
+</script>
+</body>
+</html>

@@ -27,6 +27,13 @@ export interface DupeResult {
 const STRUCTURE_WEIGHT = 0.5;
 
 /**
+ * Headline numbers drive the CI budget, so only findings we would actually
+ * stand behind count towards them. A cluster we are 27% sure of is still worth
+ * showing as a question; it is not worth failing someone's build over.
+ */
+const METRIC_CONFIDENCE_FLOOR = 0.5;
+
+/**
  * Find groups of symbols that do the same job. Not a clone detector: the target
  * is the third `formatDuration` written by a session that could not find the
  * first two, which shares no tokens with them but does share intent.
@@ -57,10 +64,10 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
       .sort((a, b) => a.loc - b.loc)
       .slice(1)
       .reduce((sum, s) => sum + s.loc, 0);
-    duplicateLoc += removable;
 
     const names = group.members.map((m) => m.name);
     const score = rankScore(group);
+    if (score >= METRIC_CONFIDENCE_FLOOR) duplicateLoc += removable;
     findings.push({
       id: `duplicate:${group.members.map((m) => m.id).join('|')}`,
       kind: 'duplicate',
