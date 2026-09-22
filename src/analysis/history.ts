@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { scan } from '../api.js';
+import { UserError } from '../errors.js';
 
 /**
  * The numbers, over time.
@@ -104,7 +105,7 @@ function sampleCommits(root: string, days: number, points: number): Array<{ sha:
  */
 export async function buildHistory(root: string, options: HistoryOptions): Promise<HistoryPoint[]> {
   if (!isGitRepo(root)) {
-    throw new Error('Not a git repository, so there is no history to walk.');
+    throw new UserError('Not a git repository, so there is no history to walk.');
   }
 
   const existing = new Map(readHistory(root).map((p) => [p.sha, p]));

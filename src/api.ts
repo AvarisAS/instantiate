@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AnalysisResult, CodeGraph, Finding, Stats } from './types.js';
 import { loadConfig, type Config } from './config.js';
@@ -8,6 +8,7 @@ import { findDuplicates } from './analysis/dupes.js';
 import { findConcepts } from './analysis/concepts.js';
 import { findDrift } from './analysis/drift.js';
 import { findContradictions } from './analysis/contradiction.js';
+import { UserError } from './errors.js';
 import { buildPythonGraph } from './index/python.js';
 import { discoverFiles } from './index/extract.js';
 
@@ -25,6 +26,11 @@ export interface ScanResult extends AnalysisResult {
 
 export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
   const root = options.root ?? process.cwd();
+  // Reporting a clean scan of a directory that does not exist is worse than
+  // failing: it looks like a verdict.
+  if (!existsSync(root) || !statSync(root).isDirectory()) {
+    throw new UserError(`No such directory: ${root}`);
+  }
   const config = options.config ?? loadConfig(root);
   const warnings: string[] = [];
 
@@ -47,8 +53,13 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
         'Set `entrypoints` in .instantiate.yml — without it the result would be meaningless, not empty.',
     );
   }
-  if (graph.symbols.size === 0) {
-    warnings.push('No symbols were indexed. Check `include` and `exclude` in .instantiate.yml.');
+  if (graph.files.size === 0) {
+    warnings.push(
+      `No source files were found under ${root}. Check that this is the right directory, ` +
+        'and that `include` and `exclude` in .instantiate.yml are not excluding everything.',
+    );
+  } else if (graph.symbols.size === 0) {
+    warnings.push('Files were read but no symbols were indexed, which usually means a parse failure.');
   }
 
   const stats: Stats = {

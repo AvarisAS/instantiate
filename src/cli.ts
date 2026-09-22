@@ -7,6 +7,7 @@ import { renderSummary, renderFindings } from './report/terminal.js';
 import { readBudget, writeBudget, checkBudget } from './analysis/budget.js';
 import { bold, dim, cyan, green, red, yellow } from './util/term.js';
 import type { Finding } from './types.js';
+import { UserError } from './errors.js';
 
 const HELP = `
 ${bold('instantiate')} — see what is actually in your codebase
@@ -244,7 +245,17 @@ main()
     process.exitCode = code;
   })
   .catch((error: unknown) => {
-    console.error(`\n${red('✗')} ${error instanceof Error ? error.message : String(error)}`);
-    if (process.env.DEBUG) console.error(error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`\n${red('✗')} ${message}`);
+
+    // An unexpected failure needs a stack, or there is nothing to act on and
+    // nothing to report. Only errors raised deliberately stay quiet.
+    if (error instanceof Error && !(error instanceof UserError)) {
+      console.error(dim(error.stack?.split('\n').slice(1).join('\n') ?? ''));
+      console.error(
+        dim('\nThis looks like a bug. Please report it with the command you ran: ') +
+          cyan('https://github.com/AvarisAS/instantiate/issues'),
+      );
+    }
     process.exitCode = 1;
   });
