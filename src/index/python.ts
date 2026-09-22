@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { CodeSymbol, Edge, FileRecord, SymbolKind } from '../types.js';
+import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
 
 /**
@@ -135,19 +136,7 @@ function moduleName(file: string): string {
 }
 
 function declareModule(index: FileIndex, symbols: Map<string, CodeSymbol>): void {
-  const id = `${index.file}#<module>`;
-  symbols.set(id, {
-    id,
-    name: index.file,
-    kind: 'module',
-    file: index.file,
-    line: 1,
-    endLine: index.source.split('\n').length,
-    exported: true,
-    loc: 0,
-    body: '',
-    signature: 'module',
-  });
+  recordModule(symbols, index.file, index.source.split('\n').length);
 }
 
 function declare(
@@ -244,10 +233,6 @@ function declareMethods(
   }
 }
 
-function symbolId(file: string, name: string, container?: string): string {
-  return container ? `${file}#${container}.${name}` : `${file}#${name}`;
-}
-
 function record(
   node: Parser.SyntaxNode,
   name: string,
@@ -256,23 +241,22 @@ function record(
   symbols: Map<string, CodeSymbol>,
   container?: string,
 ): void {
-  const id = symbolId(index.file, name, container);
-  if (symbols.has(id)) return;
-  const text = node.text;
-  symbols.set(id, {
-    id,
-    name,
-    kind,
-    file: index.file,
-    line: node.startPosition.row + 1,
-    endLine: node.endPosition.row + 1,
-    // Python has no export keyword; a leading underscore is the convention for
-    // "internal", and everything else is part of the module's surface.
-    exported: !name.startsWith('_'),
-    loc: node.endPosition.row - node.startPosition.row + 1,
-    body: normaliseBody(text),
-    signature: signatureOf(node),
-  });
+  recordSymbol(
+    symbols,
+    {
+      name,
+      kind,
+      file: index.file,
+      line: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+      // Python has no export keyword; a leading underscore is the convention
+      // for "internal", and everything else is part of the module's surface.
+      exported: !name.startsWith('_'),
+      body: normaliseBody(node.text),
+      signature: signatureOf(node),
+    },
+    container,
+  );
 }
 
 /**
@@ -361,13 +345,13 @@ function connect(
   methodsByName: Map<string, string[]>,
   config: Config,
 ): void {
-  const moduleId = `${index.file}#<module>`;
+  const ownModuleId = moduleId(index.file);
 
   // `__getattr__` at module level is Python's module attribute hook, and
   // `__all__` and friends are read by the import machinery. Nothing names them.
   for (const [name, id] of index.locals) {
     if (name.startsWith('__') && name.endsWith('__')) {
-      edges.push({ from: moduleId, to: id, kind: 'calls', file: index.file, line: 1 });
+      edges.push({ from: ownModuleId, to: id, kind: 'calls', file: index.file, line: 1 });
     }
   }
 
@@ -419,12 +403,12 @@ function connect(
   for (const [alias, imported] of index.imports) {
     const target = importedModule(imported, alias, byModule);
     if (!target) continue;
-    edges.push({ from: moduleId, to: `${target.file}#<module>`, kind: 'imports', file: index.file, line: 1 });
+    edges.push({ from: ownModuleId, to: moduleId(target.file), kind: 'imports', file: index.file, line: 1 });
 
     const wanted = alias === '*' ? [...target.locals.keys()] : [imported.name?.split('.').pop() ?? alias];
     for (const name of wanted) {
       const id = target.locals.get(name);
-      if (id) edges.push({ from: moduleId, to: id, kind: 'references', file: index.file, line: 1 });
+      if (id) edges.push({ from: ownModuleId, to: id, kind: 'references', file: index.file, line: 1 });
     }
   }
 
@@ -518,7 +502,7 @@ function connect(
     }
   };
 
-  visit(root, moduleId);
+  visit(root, ownModuleId);
 }
 
 /** Every class of this name across the project, since Python has no types here. */

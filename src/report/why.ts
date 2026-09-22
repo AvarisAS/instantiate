@@ -38,10 +38,19 @@ function renderOne(context: SymbolContext, graph: CodeGraph): string {
   out.push('');
   out.push(
     section(
-      'called from',
+      'used by',
       uniqueCallers(context, graph).map((c) => ({ name: c.symbol.name, file: c.file, line: c.line })),
     ),
   );
+  if (context.importedBy.length > 0) {
+    // Importing is not using; a file may import a symbol and pass it straight on.
+    out.push(
+      `  ${bold('imported by')} ${dim(`(${context.importedBy.length})`)}\n` +
+        `    ${dim(context.importedBy.slice(0, 6).join(', '))}` +
+        (context.importedBy.length > 6 ? dim(` and ${context.importedBy.length - 6} more`) : '') +
+        '\n',
+    );
+  }
   out.push(
     section(
       'reaches',
@@ -66,13 +75,18 @@ interface Ref {
 function section(label: string, refs: Ref[]): string {
   if (refs.length === 0) return `  ${dim(label.padEnd(12))} ${dim('nothing')}\n`;
 
-  const lines = [`  ${bold(label)} ${dim(`(${refs.length})`)}`];
   const grouped = new Map<string, Ref[]>();
   for (const ref of refs) {
     const list = grouped.get(ref.file);
     if (list) list.push(ref);
     else grouped.set(ref.file, [ref]);
   }
+
+  // Count what is listed: rows are files, so a count of edges disagreed with
+  // the list underneath it.
+  const lines = [
+    `  ${bold(label)} ${dim(`(${refs.length} in ${grouped.size} file${grouped.size === 1 ? '' : 's'})`)}`,
+  ];
 
   for (const [file, group] of [...grouped].slice(0, 12)) {
     lines.push(`    ${cyan(`${file}:${group[0].line}`)} ${dim(group.map((r) => r.name).join(', '))}`);

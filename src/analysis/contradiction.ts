@@ -1,4 +1,4 @@
-import type { CodeGraph, CodeSymbol, Finding } from '../types.js';
+import type { CodeGraph, CodeSymbol, Finding, Severity } from '../types.js';
 import { splitIdentifier } from './similarity.js';
 
 /**
@@ -98,50 +98,68 @@ export function findContradictions(graph: CodeGraph): ContradictionResult {
 }
 
 /**
- * The same environment variable or config key, with two different fallbacks.
- * Whichever call site runs first wins, which is never what anybody intended.
+ * One rule: find sites, group them, and report a group that states more than
+ * one value.
+ *
+ * Both the environment-variable rule and the declared-constant rule are this
+ * shape, differing only in what they match and how strongly they believe it.
+ * They were written separately and drifted apart; the duplicate detector caught
+ * them, which seems like the right test of it.
  */
-function divergentDefaults(graph: CodeGraph): Finding[] {
-  const byKey = new Map<string, Site[]>();
-  // `process.env.FOO ?? 'x'`, `process.env.FOO || 'x'`, `env.FOO ?? 3000`
-  const pattern = /(?:process\.env|env)\s*(?:\.\s*([A-Z][A-Z0-9_]*)|\[\s*['"]([A-Za-z0-9_]+)['"]\s*\])\s*(?:\?\?|\|\|)\s*([^;,)\]}]+)/g;
+interface DivergenceRule {
+  id: string;
+  pattern: RegExp;
+  /** Pull the grouping key and the value out of a match, or skip it. */
+  extract: (match: RegExpExecArray) => { key: string; value: string } | undefined;
+  /** Reject a group before it becomes a finding. */
+  accept?: (sites: Site[]) => boolean;
+  severity: Severity;
+  score: number;
+  title: (key: string, values: string[], sites: Site[]) => string;
+  detail: (key: string, values: string[], sites: Site[]) => string;
+  evidence?: (key: string, sites: Site[]) => Record<string, unknown>;
+}
+
+function applyRule(graph: CodeGraph, rule: DivergenceRule): Finding[] {
+  const groups = new Map<string, Site[]>();
 
   for (const [file, text] of sourceFiles(graph)) {
+    rule.pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
-    pattern.lastIndex = 0;
-    while ((match = pattern.exec(text)) !== null) {
-      const key = match[1] ?? match[2];
-      const value = normaliseValue(match[3]);
-      if (!key || !value) continue;
-      const site: Site = { ...locate(graph, file, text, match.index), value, raw: match[0].trim() };
-      const list = byKey.get(key);
+    while ((match = rule.pattern.exec(text)) !== null) {
+      const extracted = rule.extract(match);
+      if (!extracted) continue;
+      const site: Site = {
+        ...locate(graph, file, text, match.index),
+        value: extracted.value,
+        raw: match[0].trim(),
+      };
+      const list = groups.get(extracted.key);
       if (list) list.push(site);
-      else byKey.set(key, [site]);
+      else groups.set(extracted.key, [site]);
     }
   }
 
   const findings: Finding[] = [];
-  for (const [key, sites] of byKey) {
-    const values = new Set(sites.map((s) => s.value));
-    if (values.size < 2) continue;
+  for (const [key, sites] of groups) {
+    const values = [...new Set(sites.map((s) => s.value))];
+    if (values.length < 2) continue;
+    if (rule.accept && !rule.accept(sites)) continue;
 
     findings.push({
-      id: `contradiction:default:${key}`,
+      id: `contradiction:${rule.id}:${key}`,
       kind: 'contradiction',
-      severity: 'high',
-      title: `${key} falls back to ${values.size} different values`,
-      detail:
-        `${[...values].join(' and ')}. Whichever site runs first decides the behaviour, ` +
-        'so the value this actually takes depends on import order rather than on a decision.',
+      severity: rule.severity,
+      title: rule.title(key, values, sites),
+      detail: rule.detail(key, values, sites),
       file: sites[0].file,
       line: sites[0].line,
       symbols: sites.map((s) => s.symbol?.id ?? `${s.file}#<module>`),
       loc: sites.length,
-      // Two literal defaults for one key is about as unambiguous as static
-      // analysis gets, so this is reported with real confidence.
-      score: 0.9,
+      score: rule.score,
       evidence: {
         key,
+        ...(rule.evidence?.(key, sites) ?? {}),
         variants: sites.map((s) => ({
           value: s.value,
           raw: s.raw,
@@ -156,82 +174,65 @@ function divergentDefaults(graph: CodeGraph): Finding[] {
 }
 
 /**
- * One named concept, several magic numbers. A `timeout` of 3000 in one module
- * and 30000 in another is a decision nobody made twice on purpose.
+ * The same environment variable or config key, with two different fallbacks.
+ * Whichever call site runs first wins, which is never what anybody intended.
+ */
+function divergentDefaults(graph: CodeGraph): Finding[] {
+  return applyRule(graph, {
+    id: 'default',
+    // `process.env.FOO ?? 'x'`, `env.FOO || 3000`, `env['FOO'] ?? 'x'`
+    pattern:
+      /(?:process\.env|env)\s*(?:\.\s*([A-Z][A-Z0-9_]*)|\[\s*['"]([A-Za-z0-9_]+)['"]\s*\])\s*(?:\?\?|\|\|)\s*([^;,)\]}]+)/g,
+    extract: (match) => {
+      const key = match[1] ?? match[2];
+      const value = normaliseValue(match[3]);
+      return key && value ? { key, value } : undefined;
+    },
+    // Two literal defaults for one key is about as unambiguous as static
+    // analysis gets, so this is reported with real confidence.
+    severity: 'high',
+    score: 0.9,
+    title: (key, values) => `${key} falls back to ${values.length} different values`,
+    detail: (_key, values) =>
+      `${values.join(' and ')}. Whichever site runs first decides the behaviour, ` +
+      'so the value this actually takes depends on import order rather than on a decision.',
+  });
+}
+
+/**
+ * One declared setting, several values. `DEFAULT_CONCURRENCY = 1024` in one
+ * file and `= 2` in another is a decision nobody made twice on purpose.
  */
 function divergentConstants(graph: CodeGraph): Finding[] {
-  const byConcept = new Map<string, Site[]>();
-  // Only a *declared* constant, never a property inside an options object.
-  //
-  // `maxAge: 1000` in one feature and `maxAge: 3600` in another are two
-  // features' settings, not a disagreement — matching those would have made
-  // this rule mostly false positives. `const DEFAULT_TIMEOUT = 3000` in one
-  // file against `30000` in another is the real failure mode: two places each
-  // deciding the same thing.
-  // A declaration keyword, or a SCREAMING_SNAKE name, which is a declared
-  // setting by convention. Single digits count here — `DEFAULT_CONCURRENCY = 2`
-  // against `= 1024` is exactly the disagreement worth finding, and requiring
-  // two digits silently excluded it.
-  const pattern =
-    /(?:\b(?:const|let|var|final|static)\s+([A-Za-z_$][\w$]*)|^\s*([A-Z][A-Z0-9_]{2,}))\s*(?::\s*\w+\s*)?=\s*(\d+)\s*(?:;|$)/gm;
-
-  for (const [file, text] of sourceFiles(graph)) {
-    let match: RegExpExecArray | null;
-    pattern.lastIndex = 0;
-    while ((match = pattern.exec(text)) !== null) {
+  return applyRule(graph, {
+    id: 'constant',
+    // A declaration keyword, or a SCREAMING_SNAKE name, which is a declared
+    // setting by convention. Never a property inside an options object:
+    // `maxAge: 1000` in one feature and `3600` in another are two settings,
+    // not a disagreement, and matching those made this mostly false positives.
+    pattern:
+      /(?:\b(?:const|let|var|final|static)\s+([A-Za-z_$][\w$]*)|^\s*([A-Z][A-Z0-9_]{2,}))\s*(?::\s*\w+\s*)?=\s*(\d+)\s*(?:;|$)/gm,
+    extract: (match) => {
       const name = match[1] ?? match[2];
-      if (!name) continue;
+      if (!name) return undefined;
       const words = splitIdentifier(name);
-      // Either it names a concept that should hold one value, or it is a
-      // SCREAMING_SNAKE constant, which is a declared setting by convention.
       const namesConcept = words.some((w) => NUMERIC_CONCEPTS.includes(w));
       const isDeclaredConstant = /^[A-Z][A-Z0-9_]{2,}$/.test(name);
-      if (!namesConcept && !isDeclaredConstant) continue;
-      // Key on the whole name, not just the concept word: `retryDelay` and
-      // `retryLimit` are different facts that happen to share a word.
-      const key = words.join('-');
-      const site: Site = { ...locate(graph, file, text, match.index), value: match[3], raw: match[0].trim() };
-      const list = byConcept.get(key);
-      if (list) list.push(site);
-      else byConcept.set(key, [site]);
-    }
-  }
-
-  const findings: Finding[] = [];
-  for (const [key, sites] of byConcept) {
-    const values = new Set(sites.map((s) => s.value));
-    if (values.size < 2) continue;
+      if (!namesConcept && !isDeclaredConstant) return undefined;
+      // Key on the whole name: `retryDelay` and `retryLimit` are different
+      // facts that happen to share a word.
+      return { key: words.join('-'), value: match[3] };
+    },
     // One file stating two values is usually a table of cases, not a conflict.
-    const files = new Set(sites.map((s) => s.file));
-    if (files.size < 2) continue;
-
-    const label = key.split('-').join(' ');
-    findings.push({
-      id: `contradiction:constant:${key}`,
-      kind: 'contradiction',
-      severity: 'medium',
-      title: `"${label}" is ${[...values].sort((a, b) => Number(a) - Number(b)).join(', ')} in different places`,
-      detail:
-        `${sites.length} sites across ${files.size} files state a different number for the same thing. ` +
-        'One of them is stale, or this value belongs in one place rather than several.',
-      file: sites[0].file,
-      line: sites[0].line,
-      symbols: sites.map((s) => s.symbol?.id ?? `${s.file}#<module>`),
-      loc: sites.length,
-      score: 0.6,
-      evidence: {
-        concept: label,
-        variants: sites.map((s) => ({
-          value: s.value,
-          raw: s.raw,
-          file: s.file,
-          line: s.line,
-          symbol: s.symbol?.name ?? '(module scope)',
-        })),
-      },
-    });
-  }
-  return findings;
+    accept: (sites) => new Set(sites.map((s) => s.file)).size >= 2,
+    severity: 'medium',
+    score: 0.6,
+    title: (key, values) =>
+      `"${key.split('-').join(' ')}" is ${values.slice().sort((a, b) => Number(a) - Number(b)).join(', ')} in different places`,
+    detail: (_key, _values, sites) =>
+      `${sites.length} sites across ${new Set(sites.map((s) => s.file)).size} files state a different ` +
+      'number for the same thing. One of them is stale, or this value belongs in one place rather than several.',
+  });
 }
 
 /**

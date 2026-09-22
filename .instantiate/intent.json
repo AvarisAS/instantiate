@@ -1,0 +1,37 @@
+[
+  {
+    "symbol": "src/config.ts#Config",
+    "purpose": "Everything the autodetection guessed plus whatever .instantiate.yml overrode. Entrypoints and publicApi are the two that decide whether dead-code detection means anything at all.",
+    "notFor": "Tuning knobs for their own sake. Every field here should be something autodetection can get wrong on a real repository.",
+    "status": "confirmed",
+    "updatedAt": 1790098959134
+  },
+  {
+    "symbol": "src/types.ts#CodeGraph",
+    "purpose": "Symbols, the edges between them, and per-file source. It is built once per scan and every analysis reads it, so anything an analysis needs must be here rather than re-derived.",
+    "notFor": "A persistent store. It is rebuilt per scan; the durable artefacts are the budget, the intent records and the dismissals.",
+    "status": "confirmed",
+    "updatedAt": 1790098957775
+  },
+  {
+    "symbol": "src/types.ts#CodeSymbol",
+    "purpose": "One navigable thing in a codebase: a function, class, type or module-level binding. Every language backend produces these, so the analyses never need to know which language they are reading.",
+    "notFor": "Local variables and nested functions. Recording those floods the graph with thousands of nodes nobody navigates to, and every analysis then has to filter them out again.",
+    "status": "confirmed",
+    "updatedAt": 1790098955165
+  },
+  {
+    "symbol": "src/types.ts#Finding",
+    "purpose": "Something a human should decide about, with enough evidence attached to justify it. Score is confidence, loc is size, and the two together drive both ranking and the CI budget.",
+    "notFor": "A style opinion, or anything the tool cannot stand behind. Findings below 50% confidence are shown as questions but excluded from the headline numbers.",
+    "status": "confirmed",
+    "updatedAt": 1790098956477
+  },
+  {
+    "symbol": "src/types.ts#Stats",
+    "purpose": "The headline numbers, which drive the CI budget. Only findings above the confidence floor are counted, so these can legitimately be lower than the findings list suggests.",
+    "notFor": "A summary of everything found. It deliberately under-reports, because a number that fails someone's build has to be one we would defend.",
+    "status": "confirmed",
+    "updatedAt": 1790098960406
+  }
+]

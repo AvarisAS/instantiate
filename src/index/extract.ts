@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { CodeGraph, CodeSymbol, Edge, FileRecord, SymbolKind } from '../types.js';
+import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
 import { relPath } from '../config.js';
 import { matchesAny } from '../util/glob.js';
@@ -263,7 +264,7 @@ function markSideEffects(sf: ts.SourceFile, file: string, symbols: Map<string, C
       ts.isWhileStatement(statement) ||
       ts.isTryStatement(statement),
   );
-  const module = symbols.get(`${file}#<module>`);
+  const module = symbols.get(moduleId(file));
   if (module) module.sideEffects = executable;
 }
 
@@ -274,23 +275,7 @@ function declareModule(
   symbols: Map<string, CodeSymbol>,
   declToId: Map<ts.Node, string>,
 ): void {
-  const id = `${file}#<module>`;
-  symbols.set(id, {
-    id,
-    name: file,
-    kind: 'module',
-    file,
-    line: 1,
-    endLine: countLines(text),
-    // Importing a module runs it, so it is reachable from outside by definition.
-    exported: true,
-    // Lines belong to the declarations inside, not to the module wrapper, or
-    // every file would be counted twice in every total.
-    loc: 0,
-    body: '',
-    signature: 'module',
-  });
-  declToId.set(sf, id);
+  declToId.set(sf, recordModule(symbols, file, countLines(text)));
 }
 
 function createProgram(config: Config, files: string[]): ts.Program {
@@ -357,10 +342,6 @@ function countLines(text: string): number {
   let n = 0;
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
   return n + 1;
-}
-
-function symbolId(file: string, name: string, container?: string): string {
-  return container ? `${file}#${container}.${name}` : `${file}#${name}`;
 }
 
 /**
@@ -433,23 +414,24 @@ function record(
   declToId: Map<ts.Node, string>,
   container?: string,
 ): void {
-  const id = symbolId(file, name, container);
-  if (symbols.has(id)) return; // First declaration wins; overloads collapse into one.
   const start = sf.getLineAndCharacterOfPosition(node.getStart(sf));
   const end = sf.getLineAndCharacterOfPosition(node.getEnd());
-  symbols.set(id, {
-    id,
-    name,
-    kind,
-    file,
-    line: start.line + 1,
-    endLine: end.line + 1,
-    exported: isExported(node) || (!!container && !name.startsWith('#')),
-    ambient: isAmbient(node),
-    loc: end.line - start.line + 1,
-    body: normaliseBody(node, sf),
-    signature: signatureOf(node),
-  });
+  const id = recordSymbol(
+    symbols,
+    {
+      name,
+      kind,
+      file,
+      line: start.line + 1,
+      endLine: end.line + 1,
+      // A class member is part of its class's surface unless it is `#private`.
+      exported: isExported(node) || (!!container && !name.startsWith('#')),
+      ambient: isAmbient(node),
+      body: normaliseBody(node, sf),
+      signature: signatureOf(node),
+    },
+    container,
+  );
   declToId.set(node, id);
 }
 

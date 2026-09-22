@@ -111,16 +111,38 @@ export function runIntentCommand(argv: string[], result: ScanResult, root: strin
   }
 }
 
-/** Symbols many things depend on: where a wrong guess costs the most. */
+/**
+ * Symbols where a wrong guess costs the most.
+ *
+ * Not simply the most-referenced: every file in a project mentions its core
+ * types and its logging helper, and neither is where an agent's assumption goes
+ * wrong. What matters is how much behaviour hangs off a thing — how many
+ * callers, weighted by how much it actually does — so a two-line colour helper
+ * with sixty callers ranks below a sixty-line function with ten.
+ */
 function loadBearing(result: ScanResult, limit: number): Array<{ symbol: CodeSymbol; callers: number }> {
   const callers = new Map<string, number>();
   for (const edge of result.graph.edges) {
     callers.set(edge.to, (callers.get(edge.to) ?? 0) + 1);
   }
+
+  const weight = (symbol: CodeSymbol, count: number): number =>
+    count * Math.log2(symbol.loc + 2);
+
   return [...result.graph.symbols.values()]
     .map((symbol) => ({ symbol, callers: callers.get(symbol.id) ?? 0 }))
-    .filter((s) => s.callers > 0)
-    .sort((a, b) => b.callers - a.callers || b.symbol.loc - a.symbol.loc)
+    .filter(
+      (s) =>
+        s.callers > 0 &&
+        s.symbol.kind !== 'module' &&
+        // A one-liner carries no intent worth recording.
+        s.symbol.loc >= 4,
+    )
+    .sort(
+      (a, b) =>
+        weight(b.symbol, b.callers) - weight(a.symbol, a.callers) ||
+        a.symbol.id.localeCompare(b.symbol.id),
+    )
     .slice(0, limit);
 }
 

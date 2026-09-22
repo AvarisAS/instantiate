@@ -12,7 +12,10 @@ import { IntentStore } from '../intent/store.js';
 export interface SymbolContext {
   symbol: CodeSymbol;
   intent?: IntentRecord;
+  /** Edges pointing at this symbol, including one per import statement. */
   callers: Edge[];
+  /** Files that import it, as distinct from code that uses it. */
+  importedBy: string[];
   reaches: CodeSymbol[];
   /** Nothing calls it and nothing outside can: a deletion candidate. */
   orphaned: boolean;
@@ -47,10 +50,15 @@ export function lookup(graph: CodeGraph, query: string, root: string): LookupRes
         .map((e) => graph.symbols.get(e.to))
         .filter((s): s is CodeSymbol => !!s),
     );
+    // An import edge starts at the module symbol and points at the import
+    // statement's line. Listing it beside real call sites made `why` report a
+    // caller "at" a line that only names the symbol.
+    const isImport = (edge: Edge): boolean => edge.from.endsWith('#<module>');
     return {
       symbol,
       intent: intents.get(symbol.id),
-      callers,
+      callers: callers.filter((edge) => !isImport(edge)),
+      importedBy: [...new Set(callers.filter(isImport).map((edge) => edge.file))],
       reaches,
       orphaned: callers.length === 0 && !symbol.exported,
     };

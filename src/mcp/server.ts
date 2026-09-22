@@ -248,9 +248,12 @@ function findSymbol(query: string, result: ScanResult, root: string): string {
     }
 
     const callers = uniqueCallers(context, result.graph);
-    lines.push(`\ncalled from (${callers.length}):`);
+    lines.push(`\nused by (${callers.length}):`);
     for (const caller of callers.slice(0, 20)) {
       lines.push(`  ${caller.symbol.name} — ${caller.file}:${caller.line}`);
+    }
+    if (context.importedBy.length > 0) {
+      lines.push(`\nimported by (${context.importedBy.length}): ${context.importedBy.slice(0, 10).join(', ')}`);
     }
 
     lines.push(`\nreaches (${context.reaches.length}):`);

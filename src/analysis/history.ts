@@ -30,6 +30,12 @@ export interface HistoryPoint {
   /** The analysis that produced this point; older ones are re-measured. */
   version?: number;
   date: string;
+  /**
+   * Full commit timestamp. Ordering on the date alone puts a day's worth of
+   * commits in arbitrary order, which on a young repository is every commit
+   * there is, and draws a line that goes backwards.
+   */
+  at?: string;
   deadLoc: number;
   duplicateLoc: number;
   driftCount: number;
@@ -62,7 +68,9 @@ export function readHistory(root: string): HistoryPoint[] {
 
 function writeHistory(root: string, points: HistoryPoint[]): void {
   mkdirSync(join(root, '.instantiate'), { recursive: true });
-  const sorted = points.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = points
+    .slice()
+    .sort((a, b) => (a.at ?? a.date).localeCompare(b.at ?? b.date));
   writeFileSync(historyPath(root), `${JSON.stringify(sorted, null, 2)}\n`);
 }
 
@@ -84,8 +92,14 @@ function git(root: string, args: string[]): string {
  * cut-off. Sampling by date rather than by commit count keeps the x-axis
  * honest, since a quiet fortnight should look quiet.
  */
-function sampleCommits(root: string, days: number, points: number): Array<{ sha: string; date: string }> {
-  const out: Array<{ sha: string; date: string }> = [];
+interface Sample {
+  sha: string;
+  date: string;
+  at: string;
+}
+
+function sampleCommits(root: string, days: number, points: number): Sample[] {
+  const out: Sample[] = [];
   const seen = new Set<string>();
   const now = Date.now();
   const step = (days * 86_400_000) / Math.max(1, points - 1);
@@ -103,7 +117,37 @@ function sampleCommits(root: string, days: number, points: number): Array<{ sha:
     // A quiet period samples the same commit repeatedly; one point is enough.
     if (!sha || seen.has(sha)) continue;
     seen.add(sha);
-    out.push({ sha, date: date?.slice(0, 10) ?? '' });
+    out.push({ sha, date: date?.slice(0, 10) ?? '', at: date ?? '' });
+  }
+
+  // Sampling by date keeps the x-axis honest, but a young repository does all
+  // its work in a few days and collapses to two points. Spread the commits
+  // themselves instead, which is the case this tool most wants to serve.
+  if (out.length < points) {
+    const spread = sampleByCommitCount(root, points, seen);
+    out.push(...spread);
+    out.sort((a, b) => a.at.localeCompare(b.at));
+  }
+  return out;
+}
+
+function sampleByCommitCount(root: string, points: number, seen: Set<string>): Sample[] {
+  let log: string[];
+  try {
+    log = git(root, ['log', '--format=%H %cI']).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+  if (log.length === 0) return [];
+
+  const out: Sample[] = [];
+  const step = Math.max(1, Math.floor(log.length / points));
+  // `git log` is newest first; walk from the oldest so the line reads forwards.
+  for (let i = log.length - 1; i >= 0 && seen.size < points + out.length; i -= step) {
+    const [sha, date] = log[i].split(' ');
+    if (!sha || seen.has(sha)) continue;
+    seen.add(sha);
+    out.push({ sha, date: date?.slice(0, 10) ?? '', at: date ?? '' });
   }
   return out;
 }
@@ -147,6 +191,7 @@ export async function buildHistory(root: string, options: HistoryOptions): Promi
         sha: commit.sha,
         version: ANALYSIS_VERSION,
         date: commit.date,
+        at: commit.at,
         deadLoc: result.stats.deadLoc,
         duplicateLoc: result.stats.duplicateLoc,
         driftCount: result.stats.driftCount,

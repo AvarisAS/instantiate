@@ -1,11 +1,101 @@
 [
   {
-    "sha": "423c5c6a822bf6a558622bc161dd9e4ee089ae56",
+    "sha": "665ce67e5d18369f71466ff0e1976ccd744303d6",
+    "version": 3,
     "date": "2026-09-22",
+    "at": "2026-09-22T09:20:24+02:00",
+    "deadLoc": 1051,
+    "duplicateLoc": 0,
+    "driftCount": 0,
+    "loc": 1493,
+    "loadBearing": 29.6
+  },
+  {
+    "sha": "57d148fc6949604b04a93e8db841e1c816d8314e",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T09:29:08+02:00",
     "deadLoc": 2,
     "duplicateLoc": 0,
     "driftCount": 2,
-    "loc": 4091,
-    "loadBearing": 99.95
+    "loc": 3443,
+    "loadBearing": 99.94
+  },
+  {
+    "sha": "d3426a53630f2c4c90f819e94b9a91da7474ef8a",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T10:17:11+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 58,
+    "driftCount": 3,
+    "loc": 5151,
+    "loadBearing": 98.84
+  },
+  {
+    "sha": "128004bc432ae5e13ed3827c93cedd745f4acef8",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T13:08:07+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 58,
+    "driftCount": 3,
+    "loc": 5344,
+    "loadBearing": 98.88
+  },
+  {
+    "sha": "1e6fc9b169ad8a487375b08bc9deba81c6e80563",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T13:56:15+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 58,
+    "driftCount": 3,
+    "loc": 6062,
+    "loadBearing": 99.01
+  },
+  {
+    "sha": "854c2b9c417fa3cbdb38c58122ee7bec8d79ec24",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T18:39:00+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 87,
+    "driftCount": 3,
+    "loc": 6461,
+    "loadBearing": 98.62
+  },
+  {
+    "sha": "61b4986314e012cf97cfeb1e52aa59b0fc3c1de4",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T18:43:44+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 97,
+    "driftCount": 3,
+    "loc": 6575,
+    "loadBearing": 98.49
+  },
+  {
+    "sha": "f8675d4ac3cec0b01328d706ddaceaafdc0446f8",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T18:50:40+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 103,
+    "driftCount": 3,
+    "loc": 6716,
+    "loadBearing": 98.44
+  },
+  {
+    "sha": "e55dec062925339797e4135f2459e9016f639ef4",
+    "version": 3,
+    "date": "2026-09-22",
+    "at": "2026-09-22T18:55:49+02:00",
+    "deadLoc": 2,
+    "duplicateLoc": 103,
+    "driftCount": 3,
+    "loc": 6895,
+    "loadBearing": 98.48
   }
 ]
