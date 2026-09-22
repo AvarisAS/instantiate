@@ -100,7 +100,8 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   entrypoints.push('**/{test_*,*_test}.py');
   entrypoints.push('{test,tests}/**/*.py');
 
-  entrypoints.push('{test,tests,spec,__tests__}/**/*.{ts,tsx,js,jsx,mts,cts}');
+  entrypoints.push('{test,tests,spec,__tests__,test-d,type-tests,types-test}/**/*.{ts,tsx,js,jsx,mts,cts}');
+  entrypoints.push('**/*.{test-d,typetest}.{ts,tsx}');
   entrypoints.push('**/*.{test,spec}.{ts,tsx,js,jsx}');
 
   // Scripts, benchmarks and examples are executed directly rather than imported.
@@ -108,6 +109,16 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   // Matched at any depth, since a monorepo keeps them in packages/bench and the
   // like rather than at the root.
   entrypoints.push(`**/{${SCRIPT_DIRS.join(',')}}/**/*.{ts,tsx,js,jsx,mts,cts}`);
+
+  // A package's `__init__.py` re-exports are its published surface, exactly as a
+  // barrel is in TypeScript: absent callers inside the repo are the point.
+  if (
+    existsSync(join(root, 'pyproject.toml')) ||
+    existsSync(join(root, 'setup.py')) ||
+    existsSync(join(root, 'setup.cfg'))
+  ) {
+    publicApi.push('**/__init__.py');
+  }
 
   // Vendored and generated code is somebody else's contract. Its unused exports
   // are real, and they are not this repository's problem to act on.
@@ -228,7 +239,8 @@ function sourceOf(root: string, published: string): string | undefined {
   }
 
   for (const candidate of candidates) {
-    if (candidate && existsSync(join(root, candidate))) return candidate;
+    if (!candidate || !/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(candidate)) continue;
+    if (existsSync(join(root, candidate))) return candidate;
   }
   return undefined;
 }

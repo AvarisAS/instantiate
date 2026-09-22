@@ -16,6 +16,7 @@ export function buildGraph(config: Config): CodeGraph {
   const symbols = new Map<string, CodeSymbol>();
   const edges: Edge[] = [];
   const fileRecords = new Map<string, FileRecord>();
+  const sources = new Map<string, string>();
   /** Declaration node -> symbol id, so pass two can resolve references to symbols. */
   const declToId = new Map<ts.Node, string>();
 
@@ -34,6 +35,7 @@ export function buildGraph(config: Config): CodeGraph {
       indexedAt: Date.now(),
     });
     declareModule(sf, rel, text, symbols, declToId);
+    sources.set(rel, stripComments(text));
     collectDeclarations(sf, rel, sf, symbols, declToId);
   }
 
@@ -44,16 +46,68 @@ export function buildGraph(config: Config): CodeGraph {
     collectEdges(sf, rel, sf, checker, declToId, symbols, edges, config, program, byFileName);
   }
 
+  linkClassMembers(symbols, edges);
   collectSatelliteEdges(config, byFileName, checker, declToId, edges);
 
   return {
     root: config.root,
+    sources,
     symbols,
     edges,
     files: fileRecords,
     entrypoints: [],
     createdAt: Date.now(),
   };
+}
+
+/**
+ * Two things the graph cannot see by reference alone.
+ *
+ * `new Context(opts)` resolves to the class, never to its constructor, so the
+ * constructor — and everything only it touches, such as the type of its own
+ * parameter — looked unreachable. And a call through a base or abstract method
+ * names only that declaration, while the code that actually runs is an override
+ * in a subclass the caller never mentions.
+ *
+ * Both are real edges in the running program, so both are edges here.
+ */
+function linkClassMembers(symbols: Map<string, CodeSymbol>, edges: Edge[]): void {
+  const methodsOf = new Map<string, Map<string, string>>();
+  for (const symbol of symbols.values()) {
+    if (symbol.kind !== 'method') continue;
+    const [file, qualified] = symbol.id.split('#');
+    const dot = qualified.lastIndexOf('.');
+    if (dot === -1) continue;
+    const classId = `${file}#${qualified.slice(0, dot)}`;
+    const name = qualified.slice(dot + 1);
+    const map = methodsOf.get(classId);
+    if (map) map.set(name, symbol.id);
+    else methodsOf.set(classId, new Map([[name, symbol.id]]));
+  }
+
+  // Constructing a class runs its constructor.
+  for (const [classId, methods] of methodsOf) {
+    const constructor = methods.get('constructor');
+    const owner = symbols.get(classId);
+    if (constructor && owner) {
+      edges.push({ from: classId, to: constructor, kind: 'calls', file: owner.file, line: owner.line });
+    }
+  }
+
+  // A reached base member reaches every override of it, in either direction of
+  // the relationship: `extends` links the subclass to the base.
+  const hierarchy = edges.filter((e) => e.kind === 'extends' || e.kind === 'implements');
+  for (const edge of hierarchy) {
+    const derived = methodsOf.get(edge.from);
+    const base = methodsOf.get(edge.to);
+    if (!derived || !base) continue;
+    for (const [name, baseId] of base) {
+      const override = derived.get(name);
+      if (override && override !== baseId) {
+        edges.push({ from: baseId, to: override, kind: 'calls', file: edge.file, line: edge.line });
+      }
+    }
+  }
 }
 
 /**
@@ -240,6 +294,16 @@ function symbolId(file: string, name: string, container?: string): string {
   return container ? `${file}#${container}.${name}` : `${file}#${name}`;
 }
 
+/** Inside `declare module '…'` or `declare global`. */
+function isAmbient(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isModuleDeclaration(current)) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
 function isExported(node: ts.Node): boolean {
   const mods = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
   return !!mods?.some(
@@ -261,6 +325,13 @@ function signatureOf(node: ts.Node): string {
     return `(${params})=>${ret}`;
   }
   return node.kind.toString();
+}
+
+/** Comments removed, line structure kept, so line numbers still mean something. */
+function stripComments(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:])\/\/[^\n]*/g, (m, p) => p + ' '.repeat(Math.max(0, m.length - p.length)));
 }
 
 /** Comment-free, whitespace-normalised source. The input to duplicate detection. */
@@ -295,6 +366,7 @@ function record(
     line: start.line + 1,
     endLine: end.line + 1,
     exported: isExported(node) || (!!container && !name.startsWith('#')),
+    ambient: isAmbient(node),
     loc: end.line - start.line + 1,
     body: normaliseBody(node, sf),
     signature: signatureOf(node),
@@ -328,12 +400,21 @@ function collectDeclarations(
     const className = node.name.text;
     record(node, className, 'class', file, sf, symbols, declToId, container);
     for (const member of node.members) {
-      if ((ts.isMethodDeclaration(member) || ts.isConstructorDeclaration(member)) && member.body) {
-        const memberName = ts.isConstructorDeclaration(member)
-          ? 'constructor'
-          : member.name.getText(sf);
-        record(member, memberName, 'method', file, sf, symbols, declToId, className);
-      }
+      // An `abstract` member has no body, and neither does an overload
+      // signature. Skipping them meant a polymorphic `this.method()` resolved
+      // to nothing at all, so every override looked unreachable.
+      const isMethodLike =
+        ts.isMethodDeclaration(member) ||
+        ts.isConstructorDeclaration(member) ||
+        ts.isMethodSignature(member) ||
+        ts.isGetAccessor(member) ||
+        ts.isSetAccessor(member);
+      if (!isMethodLike) continue;
+
+      const memberName = ts.isConstructorDeclaration(member)
+        ? 'constructor'
+        : member.name.getText(sf);
+      record(member, memberName, 'method', file, sf, symbols, declToId, className);
     }
     return; // Members are handled above; do not double-visit them.
   } else if (ts.isInterfaceDeclaration(node)) {

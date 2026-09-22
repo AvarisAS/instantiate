@@ -18,6 +18,7 @@ import type { Config } from '../config.js';
  */
 
 export interface PythonGraph {
+  sources: Map<string, string>;
   symbols: Map<string, CodeSymbol>;
   edges: Edge[];
   files: Map<string, FileRecord>;
@@ -55,6 +56,7 @@ export async function buildPythonGraph(config: Config, files: string[]): Promise
   const symbols = new Map<string, CodeSymbol>();
   const edges: Edge[] = [];
   const fileRecords = new Map<string, FileRecord>();
+  const sources = new Map<string, string>();
   const indexes: FileIndex[] = [];
   const scripts: string[] = [];
 
@@ -76,6 +78,8 @@ export async function buildPythonGraph(config: Config, files: string[]): Promise
       hash: createHash('sha1').update(source).digest('hex').slice(0, 16),
       indexedAt: Date.now(),
     });
+
+    sources.set(file, source.replace(/#[^\n]*/g, ''));
 
     // `if __name__ == "__main__":` is Python's way of saying "this file is run".
     if (/if\s+__name__\s*==\s*['"]__main__['"]/.test(source)) scripts.push(file);
@@ -114,7 +118,7 @@ export async function buildPythonGraph(config: Config, files: string[]): Promise
     connect(index.tree.rootNode, index, symbols, edges, byModule, methodsByName, config);
   }
 
-  return { symbols, edges, files: fileRecords, scripts };
+  return { sources, symbols, edges, files: fileRecords, scripts };
 }
 
 /** `pkg/sub/mod.py` -> `pkg.sub.mod`, which is how Python names it. */
@@ -323,6 +327,18 @@ function connect(
 ): void {
   const moduleId = `${index.file}#<module>`;
 
+  // The interpreter calls dunder methods itself: `__call__` on `auth(request)`,
+  // `__enter__` on a `with` block, `__iter__` on a loop. Nothing in the source
+  // names them, so a reachable class must be taken to reach its own.
+  for (const [className, methods] of index.classes) {
+    const classId = symbolId(index.file, className);
+    for (const [name, methodId] of methods) {
+      if (name.startsWith('__') && name.endsWith('__')) {
+        edges.push({ from: classId, to: methodId, kind: 'calls', file: index.file, line: 1 });
+      }
+    }
+  }
+
   // Importing a module runs it, and names what it brings in.
   for (const [alias, imported] of index.imports) {
     const target = byModule.get(imported.module);
@@ -357,6 +373,24 @@ function connect(
             from: scope,
             to: target,
             kind: 'calls',
+            file: index.file,
+            line: node.startPosition.row + 1,
+          });
+        }
+      }
+    } else if (node.type === 'attribute' && scopeClass) {
+      // `self.handler` used as a value, not called: `register_hook("x", self.handler)`
+      // passes the method somewhere that will invoke it later. Without this edge
+      // the method, and everything it reaches, looks unreachable.
+      const object = node.childForFieldName('object');
+      const attribute = node.childForFieldName('attribute')?.text;
+      if (object?.type === 'identifier' && object.text === 'self' && attribute) {
+        const own = index.classes.get(scopeClass)?.get(attribute);
+        if (own && own !== scope) {
+          edges.push({
+            from: scope,
+            to: own,
+            kind: 'references',
             file: index.file,
             line: node.startPosition.row + 1,
           });

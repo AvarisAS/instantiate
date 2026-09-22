@@ -32,8 +32,11 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
     if (edge.from.endsWith('#<satellite>')) roots.add(edge.from);
   }
   for (const symbol of graph.symbols.values()) {
+    // An ambient declaration merges into a type declared elsewhere. Nothing
+    // names it, it cannot be deleted, and reporting it is always wrong.
+    if (symbol.ambient) roots.add(symbol.id);
     // Everything in an entrypoint file is reachable: module-level code runs.
-    if (entryFiles.includes(symbol.file)) roots.add(symbol.id);
+    else if (entryFiles.includes(symbol.file)) roots.add(symbol.id);
     // A published export is the package's contract; absent callers are the point.
     else if (apiFiles.includes(symbol.file) && symbol.exported) roots.add(symbol.id);
   }

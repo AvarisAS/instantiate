@@ -20,6 +20,12 @@ export interface CodeSymbol {
   endLine: number;
   /** Exported from its module. */
   exported: boolean;
+  /**
+   * Declared inside `declare module` or `declare global`. Such a declaration
+   * merges into a type somewhere else and is consumed by the type system
+   * globally, so nothing ever references it by name and it can never be deleted.
+   */
+  ambient?: boolean;
   /** Reachable from an entrypoint or public API surface. */
   loc: number;
   /** Normalised source used for duplicate detection. */
@@ -50,6 +56,15 @@ export interface FileRecord {
 
 export interface CodeGraph {
   root: string;
+  /**
+   * Comment-stripped source per file.
+   *
+   * Analyses that look for patterns rather than for symbols need the whole
+   * file: a great deal of real code — module-level configuration, anything
+   * inside a `describe()` callback — belongs to no recorded symbol, and reading
+   * only symbol bodies made those analyses blind to it.
+   */
+  sources: Map<string, string>;
   symbols: Map<string, CodeSymbol>;
   edges: Edge[];
   files: Map<string, FileRecord>;

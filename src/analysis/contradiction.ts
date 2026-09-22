@@ -22,9 +22,56 @@ export interface ContradictionResult {
 }
 
 interface Site {
-  symbol: CodeSymbol;
+  file: string;
+  line: number;
+  /** The symbol this line falls inside, for navigation. May be absent. */
+  symbol?: CodeSymbol;
   value: string;
   raw: string;
+}
+
+/**
+ * Where a contradiction does not count.
+ *
+ * A test asserting `maxAge: 1000` does not contradict production code that uses
+ * 600, and neither does a value in a documentation example or a benchmark. A
+ * false contradiction sends someone hunting for a bug that does not exist, so
+ * precision matters more here than coverage.
+ */
+const NON_SOURCE =
+  /(^|\/)(test|tests|spec|__tests__|test-d|e2e|bench|benchmark|benchmarks|perf|perf-measures|examples?|docs?|fixtures?|scripts?|vendor)\//i;
+
+function isSource(file: string): boolean {
+  return !NON_SOURCE.test(file) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file) && !/_test\.py$|^test_/.test(file);
+}
+
+/** Map a match offset to a line number and the symbol that contains it. */
+function locate(
+  graph: CodeGraph,
+  file: string,
+  text: string,
+  offset: number,
+): { file: string; line: number; symbol?: CodeSymbol } {
+  let line = 1;
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) line++;
+  }
+  let symbol: CodeSymbol | undefined;
+  for (const candidate of graph.symbols.values()) {
+    if (candidate.file !== file || candidate.kind === 'module') continue;
+    if (candidate.line <= line && line <= candidate.endLine) {
+      // Prefer the innermost symbol containing the line.
+      if (!symbol || candidate.line > symbol.line) symbol = candidate;
+    }
+  }
+  return { file, line, symbol };
+}
+
+/** Iterate every source file worth checking, with its text. */
+function* sourceFiles(graph: CodeGraph): Generator<[string, string]> {
+  for (const [file, text] of graph.sources) {
+    if (isSource(file)) yield [file, text];
+  }
 }
 
 /** Concepts whose value should be the same everywhere it is stated. */
@@ -54,16 +101,17 @@ function divergentDefaults(graph: CodeGraph): Finding[] {
   // `process.env.FOO ?? 'x'`, `process.env.FOO || 'x'`, `env.FOO ?? 3000`
   const pattern = /(?:process\.env|env)\s*(?:\.\s*([A-Z][A-Z0-9_]*)|\[\s*['"]([A-Za-z0-9_]+)['"]\s*\])\s*(?:\?\?|\|\|)\s*([^;,)\]}]+)/g;
 
-  for (const symbol of graph.symbols.values()) {
+  for (const [file, text] of sourceFiles(graph)) {
     let match: RegExpExecArray | null;
     pattern.lastIndex = 0;
-    while ((match = pattern.exec(symbol.body)) !== null) {
+    while ((match = pattern.exec(text)) !== null) {
       const key = match[1] ?? match[2];
       const value = normaliseValue(match[3]);
       if (!key || !value) continue;
+      const site: Site = { ...locate(graph, file, text, match.index), value, raw: match[0].trim() };
       const list = byKey.get(key);
-      if (list) list.push({ symbol, value, raw: match[0].trim() });
-      else byKey.set(key, [{ symbol, value, raw: match[0].trim() }]);
+      if (list) list.push(site);
+      else byKey.set(key, [site]);
     }
   }
 
@@ -80,9 +128,9 @@ function divergentDefaults(graph: CodeGraph): Finding[] {
       detail:
         `${[...values].join(' and ')}. Whichever site runs first decides the behaviour, ` +
         'so the value this actually takes depends on import order rather than on a decision.',
-      file: sites[0].symbol.file,
-      line: sites[0].symbol.line,
-      symbols: sites.map((s) => s.symbol.id),
+      file: sites[0].file,
+      line: sites[0].line,
+      symbols: sites.map((s) => s.symbol?.id ?? `${s.file}#<module>`),
       loc: sites.length,
       // Two literal defaults for one key is about as unambiguous as static
       // analysis gets, so this is reported with real confidence.
@@ -92,9 +140,9 @@ function divergentDefaults(graph: CodeGraph): Finding[] {
         variants: sites.map((s) => ({
           value: s.value,
           raw: s.raw,
-          file: s.symbol.file,
-          line: s.symbol.line,
-          symbol: s.symbol.name,
+          file: s.file,
+          line: s.line,
+          symbol: s.symbol?.name ?? '(module scope)',
         })),
       },
     });
@@ -111,17 +159,17 @@ function divergentConstants(graph: CodeGraph): Finding[] {
   // `timeout: 3000`, `const retryLimit = 5`, `maxAge = 86400`
   const pattern = /\b([A-Za-z_$][\w$]*)\s*[:=]\s*(\d{2,})\b/g;
 
-  for (const symbol of graph.symbols.values()) {
+  for (const [file, text] of sourceFiles(graph)) {
     let match: RegExpExecArray | null;
     pattern.lastIndex = 0;
-    while ((match = pattern.exec(symbol.body)) !== null) {
+    while ((match = pattern.exec(text)) !== null) {
       const words = splitIdentifier(match[1]);
       const concept = words.find((w) => NUMERIC_CONCEPTS.includes(w));
       if (!concept) continue;
       // Key on the whole name, not just the concept word: `retryDelay` and
       // `retryLimit` are different facts that happen to share a word.
       const key = words.join('-');
-      const site = { symbol, value: match[2], raw: match[0].trim() };
+      const site: Site = { ...locate(graph, file, text, match.index), value: match[2], raw: match[0].trim() };
       const list = byConcept.get(key);
       if (list) list.push(site);
       else byConcept.set(key, [site]);
@@ -133,7 +181,7 @@ function divergentConstants(graph: CodeGraph): Finding[] {
     const values = new Set(sites.map((s) => s.value));
     if (values.size < 2) continue;
     // One file stating two values is usually a table of cases, not a conflict.
-    const files = new Set(sites.map((s) => s.symbol.file));
+    const files = new Set(sites.map((s) => s.file));
     if (files.size < 2) continue;
 
     const label = key.split('-').join(' ');
@@ -145,9 +193,9 @@ function divergentConstants(graph: CodeGraph): Finding[] {
       detail:
         `${sites.length} sites across ${files.size} files state a different number for the same thing. ` +
         'One of them is stale, or this value belongs in one place rather than several.',
-      file: sites[0].symbol.file,
-      line: sites[0].symbol.line,
-      symbols: sites.map((s) => s.symbol.id),
+      file: sites[0].file,
+      line: sites[0].line,
+      symbols: sites.map((s) => s.symbol?.id ?? `${s.file}#<module>`),
       loc: sites.length,
       score: 0.6,
       evidence: {
@@ -155,9 +203,9 @@ function divergentConstants(graph: CodeGraph): Finding[] {
         variants: sites.map((s) => ({
           value: s.value,
           raw: s.raw,
-          file: s.symbol.file,
-          line: s.symbol.line,
-          symbol: s.symbol.name,
+          file: s.file,
+          line: s.line,
+          symbol: s.symbol?.name ?? '(module scope)',
         })),
       },
     });
@@ -177,11 +225,13 @@ function divergentTimeSemantics(graph: CodeGraph): Finding[] {
   const localPattern = /\b(?:get(?:FullYear|Month|Date|Hours|Minutes|Seconds)\s*\(|toLocale(?:Date|Time)?String)/;
 
   for (const symbol of graph.symbols.values()) {
+    if (symbol.kind === 'module' || !isSource(symbol.file)) continue;
     const hasUtc = utcPattern.test(symbol.body);
     const hasLocal = localPattern.test(symbol.body);
     // A symbol doing both is usually a deliberate conversion, not a conflict.
-    if (hasUtc && !hasLocal) utc.push({ symbol, value: 'UTC', raw: 'UTC' });
-    else if (hasLocal && !hasUtc) local.push({ symbol, value: 'local', raw: 'local time' });
+    const site = { file: symbol.file, line: symbol.line, symbol };
+    if (hasUtc && !hasLocal) utc.push({ ...site, value: 'UTC', raw: 'UTC' });
+    else if (hasLocal && !hasUtc) local.push({ ...site, value: 'local', raw: 'local time' });
   }
 
   if (utc.length === 0 || local.length === 0) return [];
@@ -200,14 +250,14 @@ function divergentTimeSemantics(graph: CodeGraph): Finding[] {
       detail:
         'Each is correct on its own, and together they disagree by the machine\'s offset. ' +
         'Check whether any value written by one group is read by the other.',
-      file: all[0].symbol.file,
-      line: all[0].symbol.line,
-      symbols: all.map((s) => s.symbol.id),
+      file: all[0].file,
+      line: all[0].line,
+      symbols: all.map((s) => s.symbol?.id ?? `${s.file}#<module>`),
       loc: all.length,
       score: 0.55,
       evidence: {
-        utc: utc.slice(0, 12).map((s) => ({ file: s.symbol.file, line: s.symbol.line, symbol: s.symbol.name })),
-        local: local.slice(0, 12).map((s) => ({ file: s.symbol.file, line: s.symbol.line, symbol: s.symbol.name })),
+        utc: utc.slice(0, 12).map((s) => ({ file: s.file, line: s.line, symbol: s.symbol?.name ?? '' })),
+        local: local.slice(0, 12).map((s) => ({ file: s.file, line: s.line, symbol: s.symbol?.name ?? '' })),
       },
     },
   ];

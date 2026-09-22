@@ -107,6 +107,7 @@ async function mergePython(graph: CodeGraph, config: Config): Promise<void> {
   const python = await buildPythonGraph(config, files);
   for (const [id, symbol] of python.symbols) graph.symbols.set(id, symbol);
   for (const [path, record] of python.files) graph.files.set(path, record);
+  for (const [path, source] of python.sources) graph.sources.set(path, source);
   graph.edges.push(...python.edges);
   // A `__main__` guard is discovered by reading the file, not by its name, so
   // these arrive as exact paths rather than as globs.
