@@ -12,7 +12,7 @@ const patterns = join(here, 'fixtures', 'patterns');
  * Validation against hono, chalk and zod put dead-code precision at 0%, and
  * each of these is one of the reasons why.
  */
-const result = scan({ root: patterns });
+const result = await scan({ root: patterns });
 const dead = result.findings.filter((f) => f.kind === 'dead');
 const deadNames = dead.map((f) => f.symbols[0].split('#')[1]);
 

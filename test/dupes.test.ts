@@ -6,8 +6,8 @@ import { scan } from '../src/api.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-const parallel = scan({ root: join(here, 'fixtures', 'parallel') });
-const messy = scan({ root: join(here, 'fixtures', 'messy') });
+const parallel = await scan({ root: join(here, 'fixtures', 'parallel') });
+const messy = await scan({ root: join(here, 'fixtures', 'messy') });
 
 test('one implementation per file is a parallel set, not redundancy', () => {
   // zod's sixty translations were reported as "60 implementations of the same

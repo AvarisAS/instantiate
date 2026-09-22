@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const messy = join(here, 'fixtures', 'messy');
 
 // One scan, reused: indexing is the slow part and the fixture does not change.
-const result = scan({ root: messy });
+const result = await scan({ root: messy });
 
 test('the fixture indexes and resolves cross-file edges', () => {
   assert.ok(result.stats.files >= 4, `indexed ${result.stats.files} files`);
@@ -100,10 +100,10 @@ test('concepts cover every symbol exactly once', () => {
   assert.equal(seen.size, result.graph.symbols.size);
 });
 
-test('scanning twice gives identical findings', () => {
+test('scanning twice gives identical findings', async () => {
   // Determinism matters: a report that reshuffles between runs cannot be trusted
   // or diffed, and the concept map has to be recognisable from week to week.
-  const again = scan({ root: messy });
+  const again = await scan({ root: messy });
   assert.deepEqual(
     again.findings.map((f) => f.id),
     result.findings.map((f) => f.id),

@@ -17,12 +17,12 @@ export async function serve(root: string, port: number): Promise<void> {
   let html = '';
   let building = false;
 
-  const rebuild = (): void => {
+  const rebuild = async (): Promise<void> => {
     if (building) return;
     building = true;
     const start = Date.now();
     try {
-      const result = scan({ root });
+      const result = await scan({ root });
       const findings = applyDismissals(result.findings, loadDismissals(root));
       html = inject(renderHtmlReport(result, findings), version + 1);
       version++;
@@ -36,7 +36,7 @@ export async function serve(root: string, port: number): Promise<void> {
     }
   };
 
-  rebuild();
+  await rebuild();
 
   const server = createServer((request, response) => {
     if (request.url === '/version') {
@@ -54,7 +54,7 @@ export async function serve(root: string, port: number): Promise<void> {
   try {
     watch(join(root, 'src'), { recursive: true }, () => {
       clearTimeout(timer);
-      timer = setTimeout(rebuild, 250);
+      timer = setTimeout(() => void rebuild(), 250);
     });
   } catch {
     // No src directory, or the platform lacks recursive watch: the server still

@@ -8,7 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const conflicted = join(here, 'fixtures', 'conflicted');
 const clean = join(here, 'fixtures', 'messy');
 
-const result = scan({ root: conflicted });
+const result = await scan({ root: conflicted });
 const conflicts = result.findings.filter((f) => f.kind === 'contradiction');
 
 test('one env var with two fallbacks is reported with high confidence', () => {
@@ -36,10 +36,10 @@ test('UTC and local date handling in one codebase is reported', () => {
   assert.ok((finding.evidence!.local as unknown[]).length >= 2);
 });
 
-test('a codebase without conflicts reports none', () => {
+test('a codebase without conflicts reports none', async () => {
   // The precision that matters: a false contradiction sends someone hunting
   // for a bug that does not exist.
-  const other = scan({ root: clean });
+  const other = await scan({ root: clean });
   assert.equal(other.findings.filter((f) => f.kind === 'contradiction').length, 0);
 });
 

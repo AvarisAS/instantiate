@@ -8,6 +8,8 @@ import { findDuplicates } from './analysis/dupes.js';
 import { findConcepts } from './analysis/concepts.js';
 import { findDrift } from './analysis/drift.js';
 import { findContradictions } from './analysis/contradiction.js';
+import { buildPythonGraph } from './index/python.js';
+import { discoverFiles } from './index/extract.js';
 
 export interface ScanOptions {
   root?: string;
@@ -21,13 +23,14 @@ export interface ScanResult extends AnalysisResult {
   warnings: string[];
 }
 
-export function scan(options: ScanOptions = {}): ScanResult {
+export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
   const root = options.root ?? process.cwd();
   const config = options.config ?? loadConfig(root);
   const warnings: string[] = [];
 
   const indexStart = Date.now();
   const graph = buildGraph(config);
+  await mergePython(graph, config);
   const indexMs = Date.now() - indexStart;
 
   const analyseStart = Date.now();
@@ -88,6 +91,26 @@ function severityOf(finding: Finding): Finding['severity'] {
   }
   const impact = finding.score * Math.log2(finding.loc + 2);
   return impact >= 3.5 ? 'high' : impact >= 1.8 ? 'medium' : 'low';
+}
+
+/**
+ * Index Python alongside TypeScript and merge the two into one graph.
+ *
+ * A polyglot repository is one codebase, and a per-language report would hide
+ * exactly the thing worth seeing. Loading the grammar costs real time, so it is
+ * skipped entirely when there is no Python to read.
+ */
+async function mergePython(graph: CodeGraph, config: Config): Promise<void> {
+  const files = discoverFiles(config, config.python);
+  if (files.length === 0) return;
+
+  const python = await buildPythonGraph(config, files);
+  for (const [id, symbol] of python.symbols) graph.symbols.set(id, symbol);
+  for (const [path, record] of python.files) graph.files.set(path, record);
+  graph.edges.push(...python.edges);
+  // A `__main__` guard is discovered by reading the file, not by its name, so
+  // these arrive as exact paths rather than as globs.
+  config.entrypoints = [...config.entrypoints, ...python.scripts];
 }
 
 /**

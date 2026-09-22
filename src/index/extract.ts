@@ -197,7 +197,7 @@ function createProgram(config: Config, files: string[]): ts.Program {
   return ts.createProgram({ rootNames: files, options });
 }
 
-function discoverFiles(config: Config, include: string[] = config.include): string[] {
+export function discoverFiles(config: Config, include: string[] = config.include): string[] {
   const out: string[] = [];
 
   const walk = (dir: string): void => {

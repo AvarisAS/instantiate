@@ -102,7 +102,7 @@ function sampleCommits(root: string, days: number, points: number): Array<{ sha:
  * A detached worktree is the cheap way to get one without disturbing whatever
  * the user has in progress — nothing in their working tree is touched.
  */
-export function buildHistory(root: string, options: HistoryOptions): HistoryPoint[] {
+export async function buildHistory(root: string, options: HistoryOptions): Promise<HistoryPoint[]> {
   if (!isGitRepo(root)) {
     throw new Error('Not a git repository, so there is no history to walk.');
   }
@@ -111,20 +111,20 @@ export function buildHistory(root: string, options: HistoryOptions): HistoryPoin
   const commits = sampleCommits(root, options.days, options.points);
   const results: HistoryPoint[] = [];
 
-  commits.forEach((commit, i) => {
+  for (const [i, commit] of commits.entries()) {
     options.onProgress?.(i + 1, commits.length, commit.sha);
 
     const cached = existing.get(commit.sha);
     if (cached) {
       // A commit's numbers cannot change, so never re-scan one we have.
       results.push(cached);
-      return;
+      continue;
     }
 
     const worktree = join(tmpdir(), `instantiate-${commit.sha.slice(0, 12)}`);
     try {
       git(root, ['worktree', 'add', '--detach', '--quiet', worktree, commit.sha]);
-      const result = scan({ root: worktree });
+      const result = await scan({ root: worktree });
       const clean =
         result.stats.loc > 0
           ? 1 - (result.stats.deadLoc + result.stats.duplicateLoc) / result.stats.loc
@@ -148,7 +148,7 @@ export function buildHistory(root: string, options: HistoryOptions): HistoryPoin
         rmSync(worktree, { recursive: true, force: true });
       }
     }
-  });
+  }
 
   const merged = [...existing.values()];
   for (const point of results) {

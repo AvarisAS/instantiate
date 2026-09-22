@@ -21,6 +21,9 @@ No account, no upload, no API key. Everything runs locally.
 
 ## What it finds
 
+Indexes **TypeScript, JavaScript and Python** into one graph — a polyglot repo is
+one codebase, and a per-language report hides the thing worth seeing.
+
 **Dead code** — reachability from your entrypoints. Deleting is the highest-value
 and lowest-risk action in a codebase nobody understands, so it comes first.
 
@@ -155,7 +158,11 @@ on a real codebase and is now covered by a regression test:
 
 ## Honest limits
 
-- **TypeScript and JavaScript only.** Other languages need their own indexer.
+- **TypeScript, JavaScript and Python.** Other languages need their own indexer.
+- **Python resolution is weaker than TypeScript's.** There is no type checker, so
+  `obj.method()` resolves by name across every class that defines it. That
+  over-approximates on purpose: a false "alive" costs one missed finding, a false
+  "dead" costs trust in all of them.
 - **A static graph cannot see dynamic dispatch.** String-keyed containers, routes
   built at runtime, `require(variable)`. Names that appear in string literals are
   downgraded rather than reported confidently, but a graph will still be wrong

@@ -12,6 +12,8 @@ export interface Config {
   exclude: string[];
   /** Non-code files scanned for imports, so what they use is not reported dead. */
   satellites: string[];
+  /** Python sources, indexed by the tree-sitter backend rather than by tsc. */
+  python: string[];
   /** Cosine cut-off for the duplicate clusters. Calibrated per project on first scan. */
   dupeThreshold: number;
   /** Minimum lines before a symbol is a duplicate candidate. Kills trivial-adapter noise. */
@@ -32,6 +34,10 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi'> = {
     '**/coverage/**',
     '**/*.d.ts',
     '**/*.min.js',
+    '**/__pycache__/**',
+    '**/.venv/**',
+    '**/venv/**',
+    '**/site-packages/**',
     '**/generated/**',
     '**/__generated__/**',
     '**/*.pb.ts',
@@ -43,6 +49,7 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi'> = {
   // Files that are not code but do import it: MDX docs, single-file components,
   // templates. They are never indexed, yet what they import is very much alive.
   satellites: ['**/*.{mdx,md,vue,svelte,astro,html}'],
+  python: ['**/*.py'],
   dupeThreshold: 0.72,
   dupeMinLoc: 4,
   maxFindings: 20,
@@ -88,6 +95,11 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
       }
     }
   }
+  // Python: the files an interpreter is pointed at, plus the test conventions.
+  entrypoints.push('**/{__main__,main,manage,app,wsgi,asgi,conftest,setup}.py');
+  entrypoints.push('**/{test_*,*_test}.py');
+  entrypoints.push('{test,tests}/**/*.py');
+
   entrypoints.push('{test,tests,spec,__tests__}/**/*.{ts,tsx,js,jsx,mts,cts}');
   entrypoints.push('**/*.{test,spec}.{ts,tsx,js,jsx}');
 

@@ -5,7 +5,7 @@ import { bold, dim, cyan, green, red, yellow } from '../util/term.js';
  * The trend screen. A rising line is the most motivating artefact this tool
  * produces, and a falling one is the only proof that the work paid off.
  */
-export function runTrend(root: string, days: number, points: number, json: boolean): number {
+export async function runTrend(root: string, days: number, points: number, json: boolean): Promise<number> {
   if (!isGitRepo(root)) {
     console.error(`\n${yellow('!')} Not a git repository, so there is no history to walk.\n`);
     return 1;
@@ -18,7 +18,7 @@ export function runTrend(root: string, days: number, points: number, json: boole
     );
   }
 
-  const series = buildHistory(root, {
+  const series = await buildHistory(root, {
     days,
     points,
     onProgress: (done, total, sha) => {

@@ -115,9 +115,9 @@ export async function runMcpServer(root: string): Promise<void> {
   let scannedAt = 0;
   const MAX_AGE = 30_000;
 
-  const current = (): ScanResult => {
+  const current = async (): Promise<ScanResult> => {
     if (!cached || Date.now() - scannedAt > MAX_AGE) {
-      cached = scan({ root });
+      cached = await scan({ root });
       scannedAt = Date.now();
     }
     return cached;
@@ -128,7 +128,7 @@ export async function runMcpServer(root: string): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     try {
-      const text = handle(request.params.name, args, current(), root);
+      const text = handle(request.params.name, args, await current(), root);
       return { content: [{ type: 'text' as const, text }] };
     } catch (error) {
       return {

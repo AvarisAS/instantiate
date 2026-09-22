@@ -100,7 +100,7 @@ async function main(): Promise<number> {
 
   if (args.command === 'trend') {
     const { runTrend } = await import('./report/trend.js');
-    return runTrend(args.root, args.days, args.points, args.json);
+    return await runTrend(args.root, args.days, args.points, args.json);
   }
 
   if (args.command === 'config') {
@@ -109,7 +109,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const result = scan({ root: args.root });
+  const result = await scan({ root: args.root });
   const all = visible(result.findings, args);
   const limit = args.limit ?? result.config.maxFindings;
 
