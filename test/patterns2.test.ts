@@ -51,3 +51,17 @@ test('each fixture still reports its one genuinely dead symbol', () => {
   assert.deepEqual(tsDead, ['trulyUnreachable']);
   assert.deepEqual(pyDead, ['never_used_at_all']);
 });
+
+test('a file where nothing is reachable is one finding, not one per symbol', () => {
+  // Seventeen of zod's top twenty findings were two dead files between them,
+  // reported per symbol, which pushed every independent finding out of view.
+  const orphans = ts.findings.filter((f) => f.kind === 'orphan-file');
+  assert.equal(orphans.length, 1, `expected one orphan file, got ${orphans.length}`);
+  assert.match(orphans[0].file, /unused-module\.ts$/);
+  assert.ok(orphans[0].symbols.length >= 3, 'the finding should carry every symbol in the file');
+
+  // And its symbols must not also appear as separate findings.
+  for (const name of ['abandonedBuild', 'abandonedParse']) {
+    assert.ok(!tsDead.includes(name), `${name} should be rolled up into the file finding`);
+  }
+});

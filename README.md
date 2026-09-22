@@ -25,7 +25,8 @@ Indexes **TypeScript, JavaScript and Python** into one graph — a polyglot repo
 one codebase, and a per-language report hides the thing worth seeing.
 
 **Dead code** — reachability from your entrypoints. Deleting is the highest-value
-and lowest-risk action in a codebase nobody understands, so it comes first.
+and lowest-risk action in a codebase nobody understands, so it comes first. A
+file where nothing is reachable is reported once, since that is one decision.
 
 **Semantic duplicates** — not copy-paste. `formatDuration`, `prettyTime` and
 `humanizeMs`, written weeks apart by sessions that could not find each other.
@@ -127,12 +128,12 @@ minute two.
 | --- | --- |
 | `scan` | Everything, ranked |
 | `dead` / `dupes` / `conflicts` / `drift` | One kind at a time |
+| `dismiss <id> <why>` | Hide a finding permanently, with a recorded reason |
 | `trend --days 90` | How the numbers moved over git history |
 | `concepts` | What this codebase is made of |
 | `why <symbol>` | Declared where, called from where, reaches what |
 | `report` / `serve` | HTML file / live UI |
 | `budget` / `check` | Record the baseline / enforce it |
-| `dismiss <id>` | Judged once, stays judged |
 | `intent` | Draft, confirm and read intent records |
 | `mcp` | Run as an MCP server |
 
@@ -165,6 +166,11 @@ now covered by a regression test:
 - modules that run code at load and that nothing imports, which are scripts
 
 Duplicate detection knows the difference between redundancy and design:
+
+- test suites, which repeat their scaffolding on purpose — opt in with
+  `--include-tests`
+- designed sets differing in one word: `help_option` beside `version_option`
+- one name implemented as a method by several classes, which is polymorphism
 
 - a closure and the function whose text contains it
 - stubs, which all resemble each other and implement nothing
