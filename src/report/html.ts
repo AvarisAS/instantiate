@@ -469,6 +469,13 @@ const STYLE = `
   --good: #5cb98a;
 }
 * { box-sizing: border-box; }
+/*
+ * A code browser is an application, not a document: it should take the window
+ * and grow with it. Height in percentages rather than viewport units, so the
+ * shell sits inside the safe-area padding the host applies rather than
+ * overflowing it on a phone.
+ */
+html, body { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
@@ -478,12 +485,31 @@ body {
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
-#app { max-width: 1120px; margin: 0 auto; padding-block: 40px 120px; padding-inline: 20px; }
-
-h1 {
-  font-size: var(--step-3); margin: 0 0 2px; letter-spacing: -0.025em;
-  font-weight: 620; text-wrap: balance;
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
+
+.shell-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline;
+              justify-content: space-between;
+              padding: 12px 20px; border-bottom: 1px solid var(--line);
+              background: var(--panel); flex: 0 0 auto; }
+.shell-title { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline;
+               min-width: 0; }
+.shell-body { flex: 1 1 auto; min-height: 0; display: flex; padding: 12px 16px 0; }
+.warnings { padding: 10px 20px 0; flex: 0 0 auto; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.stat { display: flex; gap: 6px; align-items: baseline; padding: 3px 10px;
+        border: 1px solid var(--line); border-radius: 999px; background: var(--sunk); }
+.stat-n { font-weight: 640; font-variant-numeric: tabular-nums; font-size: var(--step--1); }
+.stat-l { font-size: 11px; color: var(--muted); }
+.stat.is-clean .stat-n { color: var(--good); }
+.stat.is-alert .stat-n { color: var(--high); }
+
+h1 { font-size: var(--step-1); margin: 0; letter-spacing: -0.02em; font-weight: 640; }
 h2 {
   font-size: var(--step--1); text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--muted); font-weight: 650; margin: 60px 0 6px;
@@ -580,8 +606,9 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
  * a bullet beside it, so a glance down the tree reads as a heat profile of the
  * codebase; the source pane shades the exact lines to act on, in place.
  */
-.ide { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
-       background: var(--panel); }
+.ide { border: 1px solid var(--line); border-radius: 12px 12px 0 0; overflow: hidden;
+       background: var(--panel); flex: 1 1 auto; display: flex; flex-direction: column;
+       min-height: 0; min-width: 0; }
 .ide-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
            border-bottom: 1px solid var(--line); background: var(--sunk); }
 .ex-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
@@ -591,12 +618,12 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .ex-count { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
             flex: 0 0 auto; }
 
-.ide-panes { display: grid; grid-template-columns: minmax(180px, 240px) minmax(200px, 280px) 1fr;
-             height: 640px; }
+.ide-panes { display: grid; grid-template-columns: minmax(200px, 18vw) minmax(220px, 24vw) 1fr;
+             flex: 1 1 auto; min-height: 0; }
 .ide-tree, .ide-symbols { border-right: 1px solid var(--line); display: flex;
-                          flex-direction: column; min-width: 0; }
+                          flex-direction: column; min-width: 0; min-height: 0; }
 .ide-tree { overflow: auto; padding: 8px 0; }
-.ide-code { display: flex; flex-direction: column; min-width: 0; }
+.ide-code { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .pane-scroll { overflow: auto; flex: 1 1 auto; padding: 8px; }
 .code-scroll { padding: 0; }
 .pane-empty { color: var(--muted); padding: 22px 14px; font-size: var(--step--1); }
@@ -696,20 +723,22 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
-.map-block { margin-top: 40px; }
-.map-block summary { cursor: pointer; color: var(--muted); font-size: var(--step--1);
-                     padding: 6px 0; }
-.map-block summary:hover { color: var(--accent); }
+.map-wrap { padding: 12px; }
+.legend { padding: 0 12px 12px; }
 
 @media (max-width: 900px) {
-  .ide-panes { grid-template-columns: 1fr; height: auto; }
+  /* Stacked, and the shell stops being one screen: scroll the page instead. */
+  html, body { height: auto; }
+  #app { height: auto; }
+  .shell-body { padding: 12px 16px; }
+  .ide { border-radius: 12px; }
+  .ide-panes { grid-template-columns: 1fr; }
   .ide-tree { border-right: 0; border-bottom: 1px solid var(--line); max-height: 200px; }
-  .ide-symbols { border-right: 0; border-bottom: 1px solid var(--line); max-height: 260px; }
-  .ide-code { max-height: 520px; }
-  .pane-scroll { max-height: 420px; }
+  .ide-symbols { border-right: 0; border-bottom: 1px solid var(--line); max-height: 280px; }
+  .ide-code { max-height: 70vh; }
 }
-footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line);
-         color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
+footer { flex: 0 0 auto; padding: 8px 20px; border-top: 1px solid var(--line);
+         color: var(--muted); font-size: 11px; background: var(--panel); }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 @media (max-width: 640px) {
   #app { padding-block: 24px 80px; padding-inline: 16px; }
@@ -782,6 +811,7 @@ let openSymbol = null;
 let query = '';
 let symbolFilter = '';
 let onlyFlagged = false;
+let showMap = false;
 
 const FILES = new Map(DATA.files.map((f) => [f.path, f]));
 const FINDINGS = new Map(DATA.findings.map((f) => [f.id, f]));
@@ -995,12 +1025,32 @@ function explorer() {
         '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
           'value="' + esc(query) + '" autocomplete="off">' +
         '<span class="ex-count">' + files.length + ' of ' + DATA.files.length + ' files</span>' +
+        '<button class="chip' + (showMap ? ' is-on' : '') + '" data-view="map" ' +
+          'aria-pressed="' + showMap + '">map</button>' +
       '</div>' +
       '<div class="ide-panes">' +
         '<nav class="ide-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
         '<section class="ide-symbols" aria-label="Symbols">' + symbolsPane() + '</section>' +
-        '<section class="ide-code" aria-label="Source">' + codePane() + '</section>' +
+        '<section class="ide-code" aria-label="' + (showMap ? 'Map' : 'Source') + '">' +
+          (showMap ? mapPane() : codePane()) +
+        '</section>' +
       '</div>' +
+    '</div>';
+}
+
+/** The overview, as a view of the third pane rather than a separate page. */
+function mapPane() {
+  return '<div class="pane-head code-head">' +
+      '<span class="code-path">Every file, sized by lines, shaded by findings</span>' +
+      '<span class="code-meta">click to open</span>' +
+    '</div>' +
+    '<div class="pane-scroll">' +
+      '<div class="map-wrap">' + treemap() + '</div>' +
+      '<p class="legend">' +
+        '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
+        '<span><span class="swatch" style="background:' + heatColour(0.5) + '"></span>some findings</span>' +
+        '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
+      '</p>' +
     '</div>';
 }
 
@@ -1065,38 +1115,35 @@ function render() {
   const s = DATA.stats;
   const clean = s.loc > 0 ? (1 - (s.deadLoc + s.duplicateLoc) / s.loc) * 100 : 100;
 
+  const chip = (value, label, state) =>
+    '<span class="stat' + (state ? ' is-' + state : '') + '">' +
+      '<span class="stat-n">' + value + '</span>' +
+      '<span class="stat-l">' + label + '</span></span>';
+
   app.innerHTML =
-    '<h1>' + esc(DATA.title) + '</h1>' +
-    '<p class="sub">' + DATA.generatedAt + ' · ' + s.files + ' files · ' +
-      s.symbols + ' symbols · ' + s.loc.toLocaleString('en-GB') + ' lines</p>' +
+    '<header class="shell-head">' +
+      '<div class="shell-title">' +
+        '<h1>' + esc(DATA.title) + '</h1>' +
+        '<span class="sub">' + DATA.generatedAt + ' · ' + s.files + ' files · ' +
+          s.loc.toLocaleString('en-GB') + ' lines</span>' +
+      '</div>' +
+      '<div class="stats">' +
+        chip(clean.toFixed(1) + '%', 'load-bearing', clean >= 95 ? 'clean' : 'alert') +
+        chip(s.deadLoc.toLocaleString('en-GB'), 'dead', s.deadLoc === 0 ? 'clean' : '') +
+        chip(s.duplicateLoc.toLocaleString('en-GB'), 'duplicated', s.duplicateLoc === 0 ? 'clean' : '') +
+        chip(String(s.driftCount), 'drifting', s.driftCount === 0 ? 'clean' : '') +
+        chip(String(s.contradictionCount), 'conflicting', s.contradictionCount === 0 ? 'clean' : 'alert') +
+      '</div>' +
+    '</header>' +
 
-    DATA.warnings.map((w) => '<p class="warn">' + esc(w) + '</p>').join('') +
+    (DATA.warnings.length
+      ? '<div class="warnings">' + DATA.warnings.map((w) => '<p class="warn">' + esc(w) + '</p>').join('') + '</div>'
+      : '') +
 
-    '<div class="headline">' +
-      tile(clean.toFixed(1) + '%', 'load-bearing', clean >= 95 ? 'clean' : 'alert') +
-      tile(s.deadLoc.toLocaleString('en-GB'), 'lines nothing reaches', s.deadLoc === 0 ? 'clean' : '') +
-      tile(s.duplicateLoc.toLocaleString('en-GB'), 'lines of re-implementation', s.duplicateLoc === 0 ? 'clean' : '') +
-      tile(String(s.driftCount), 'conventions done two ways', s.driftCount === 0 ? 'clean' : '') +
-      tile(String(s.contradictionCount), 'values stated two ways', s.contradictionCount === 0 ? 'clean' : 'alert') +
-    '</div>' +
+    '<div id="explorer-host" class="shell-body">' + explorer() + '</div>' +
 
-    '<div id="explorer-host">' + explorer() + '</div>' +
-
-    '<details class="map-block"><summary>Show the whole codebase as a map</summary>' +
-      '<p class="lede">Every file, sized by lines and shaded by how much of it is ' +
-        'implicated in a finding. Click one to open it above.</p>' +
-      '<div class="panel">' + treemap() + '</div>' +
-      '<p class="legend">' +
-        '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
-        '<span><span class="swatch" style="background:' + heatColour(0.5) + '"></span>some findings</span>' +
-        '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
-        '<span>box size = lines of code</span>' +
-      '</p>' +
-    '</details>' +
-
-    '<footer>Generated by <strong>instantiate</strong>. ' +
-      'A static graph cannot see dynamic dispatch, so treat low-confidence findings as questions, ' +
-      'not facts.</footer>';
+    '<footer>Generated by <strong>instantiate</strong>. A static graph cannot see dynamic ' +
+      'dispatch, so treat low-confidence findings as questions, not facts.</footer>';
 }
 
 app.addEventListener('input', (event) => {
@@ -1125,6 +1172,13 @@ app.addEventListener('click', (event) => {
     const match = target && wanted ? target.symbols.find((sym) => sym.name === wanted) : null;
     openSymbol = match ? match.id : null;
     symbolFilter = '';
+    repaintExplorer();
+    return;
+  }
+
+  const view = event.target.closest('[data-view]');
+  if (view) {
+    showMap = !showMap;
     repaintExplorer();
     return;
   }
@@ -1165,14 +1219,14 @@ app.addEventListener('click', (event) => {
     return;
   }
 
-  // The map is an index into the panes, not a destination of its own.
+  // The map is a way in, not somewhere to stay: picking a file returns to it.
   const box = event.target.closest('[data-path]');
   if (box) {
     openFile = box.dataset.path;
     openSymbol = null;
     symbolFilter = '';
+    showMap = false;
     repaintExplorer();
-    document.getElementById('explorer-host').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 });
 
