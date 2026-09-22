@@ -423,6 +423,14 @@ const STYLE = `
   --medium: #8a6410;
   --low: #6d737f;
   --good: #1f6b46;
+  --focus-tint: color-mix(in srgb, var(--accent) 8%, transparent);
+  --tok-comment: #6a7a86;
+  --tok-string: #1a6b52;
+  --tok-keyword: #9a3d9e;
+  --tok-number: #9a5518;
+  --tok-type: #1f5fa8;
+  --tok-fn: #6b4ea8;
+  --tok-punct: #5c6470;
   --tint-high: color-mix(in srgb, var(--high) 9%, transparent);
   --tint-medium: color-mix(in srgb, var(--medium) 10%, transparent);
   --tint-low: color-mix(in srgb, var(--low) 7%, transparent);
@@ -436,6 +444,14 @@ const STYLE = `
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    --focus-tint: color-mix(in srgb, var(--accent) 14%, transparent);
+    --tok-comment: #6f7d8c;
+    --tok-string: #79c4a0;
+    --tok-keyword: #d79bdd;
+    --tok-number: #e0a56a;
+    --tok-type: #7fb6ee;
+    --tok-fn: #b6a5ee;
+    --tok-punct: #8b93a0;
     --bg: #101216;
     --panel: #171a20;
     --sunk: #1e222a;
@@ -683,17 +699,39 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
              text-overflow: ellipsis; white-space: nowrap; }
 .code-meta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
              flex: 0 0 auto; }
-.code { font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
-.code-line { display: flex; gap: 12px; padding: 0 12px; border-left: 3px solid transparent;
-             white-space: pre; }
-.code-line.sev-high { background: var(--tint-high); border-left-color: var(--high); cursor: pointer; }
-.code-line.sev-medium { background: var(--tint-medium); border-left-color: var(--medium); cursor: pointer; }
-.code-line.sev-low { background: var(--tint-low); border-left-color: var(--low); cursor: pointer; }
-.code-line.is-focus { outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-                      outline-offset: -1px; }
-.code-n { color: var(--muted); opacity: 0.55; user-select: none; flex: 0 0 4ch;
-          text-align: right; font-variant-numeric: tabular-nums; }
+.code { font-family: var(--mono); font-size: 11.5px; line-height: 1.65;
+        min-width: max-content; }
+.code-line { display: flex; gap: 14px; padding: 0 14px 0 0; white-space: pre; }
+.code-line.sev-high { background: var(--tint-high); box-shadow: inset 3px 0 0 var(--high); }
+.code-line.sev-medium { background: var(--tint-medium); box-shadow: inset 3px 0 0 var(--medium); }
+.code-line.sev-low { background: var(--tint-low); box-shadow: inset 3px 0 0 var(--low); }
+.code-line[data-finding] { cursor: pointer; }
+.code-line[data-finding]:hover { filter: brightness(1.06); }
+.code-line.is-focus { background: var(--focus-tint); }
+.code-line.is-focus.sev-high { background: var(--tint-high); }
+.code-n { color: var(--muted); opacity: 0.5; user-select: none; flex: 0 0 5ch;
+          text-align: right; font-variant-numeric: tabular-nums;
+          background: var(--sunk); padding: 0 8px 0 6px; }
 .code-text { flex: 1 1 auto; }
+
+/* A folded run of lines nobody needs to read. */
+.fold { display: flex; gap: 14px; align-items: center; width: 100%; border: 0;
+        border-block: 1px solid var(--line); background: var(--sunk); cursor: pointer;
+        font: inherit; font-size: 11px; color: var(--muted); padding: 3px 14px 3px 0;
+        text-align: left; }
+.fold:hover { color: var(--accent); background: var(--accent-soft); }
+.fold-mark { flex: 0 0 5ch; text-align: right; padding-right: 8px;
+             font-family: var(--mono); letter-spacing: 1px; }
+.fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Tokens. Muted enough that the severity tints still read through them. */
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-string { color: var(--tok-string); }
+.tok-keyword { color: var(--tok-keyword); }
+.tok-number { color: var(--tok-number); }
+.tok-type { color: var(--tok-type); }
+.tok-fn { color: var(--tok-fn); }
+.tok-punct { color: var(--tok-punct); }
 
 /* What to do about it, above the code it concerns. */
 .action { border: 1px solid var(--line); border-left: 3px solid var(--low);
@@ -812,6 +850,8 @@ let query = '';
 let symbolFilter = '';
 let onlyFlagged = false;
 let showMap = false;
+/** Line numbers inside folds the reader has opened. */
+let expandedFolds = new Set();
 
 const FILES = new Map(DATA.files.map((f) => [f.path, f]));
 const FINDINGS = new Map(DATA.findings.map((f) => [f.id, f]));
@@ -943,6 +983,153 @@ function symbolsPane() {
     '</div>';
 }
 
+
+/* ---------------------------------------------------------------------------
+ * Syntax colouring.
+ *
+ * Hand-written rather than pulled from a CDN: a report is read offline, from a
+ * mail attachment or a stopped train, and a highlighter that fails to load
+ * would take the code's legibility with it. It only has to be good enough to
+ * separate prose from structure — comments, strings, keywords, names — which
+ * is what makes code skimmable.
+ *
+ * Block comments and template strings span lines, so highlighting carries a
+ * little state from one line to the next.
+ * ------------------------------------------------------------------------ */
+
+const JS_KEYWORDS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'do',
+  'switch', 'case', 'break', 'continue', 'new', 'try', 'catch', 'finally', 'throw',
+  'typeof', 'instanceof', 'async', 'await', 'yield', 'class', 'extends', 'implements',
+  'super', 'this', 'null', 'undefined', 'true', 'false', 'in', 'of', 'delete', 'void',
+  'import', 'export', 'from', 'as', 'default', 'interface', 'type', 'enum', 'namespace',
+  'declare', 'readonly', 'public', 'private', 'protected', 'static', 'abstract', 'satisfies',
+]);
+
+const PY_KEYWORDS = new Set([
+  'def', 'class', 'return', 'if', 'elif', 'else', 'for', 'while', 'break', 'continue',
+  'import', 'from', 'as', 'try', 'except', 'finally', 'raise', 'with', 'lambda', 'pass',
+  'yield', 'global', 'nonlocal', 'assert', 'del', 'in', 'is', 'not', 'and', 'or',
+  'None', 'True', 'False', 'async', 'await', 'self', 'cls', 'match', 'case',
+]);
+
+const SPAN = { c: 'tok-comment', s: 'tok-string', k: 'tok-keyword', n: 'tok-number',
+               t: 'tok-type', f: 'tok-fn', p: 'tok-punct' };
+
+// Built from char codes so no quote or backslash has to survive nesting.
+const DOUBLE = String.fromCharCode(34);
+const SINGLE = String.fromCharCode(39);
+const BACKTICK = String.fromCharCode(96);
+const BACKSLASH = String.fromCharCode(92);
+
+/** Highlight one line, given and returning the multi-line state it is inside. */
+function highlightLine(text, lang, state) {
+  const keywords = lang === 'py' ? PY_KEYWORDS : JS_KEYWORDS;
+  let out = '';
+  let i = 0;
+
+  // Finish whatever ran past the end of the previous line.
+  if (state.block) {
+    const close = lang === 'py' ? state.block : '*/';
+    const at = text.indexOf(close);
+    if (at === -1) return { html: '<span class="' + SPAN.c + '">' + esc(text) + '</span>', state };
+    out += '<span class="' + SPAN.c + '">' + esc(text.slice(0, at + close.length)) + '</span>';
+    i = at + close.length;
+    state = { block: null };
+  }
+
+  while (i < text.length) {
+    const rest = text.slice(i);
+
+    // Line comment.
+    const lineComment = lang === 'py' ? /^#.*/ : /^\\/\\/.*/;
+    let m = rest.match(lineComment);
+    if (m) { out += '<span class="' + SPAN.c + '">' + esc(m[0]) + '</span>'; break; }
+
+    // Block comment, or a Python docstring, which may not close on this line.
+    if (lang !== 'py' && rest.slice(0, 2) === '/*') {
+      const close = rest.indexOf('*/', 2);
+      if (close === -1) {
+        out += '<span class="' + SPAN.c + '">' + esc(rest) + '</span>';
+        return { html: out, state: { block: '*/' } };
+      }
+      out += '<span class="' + SPAN.c + '">' + esc(rest.slice(0, close + 2)) + '</span>';
+      i += close + 2;
+      continue;
+    }
+    if (lang === 'py') {
+      const triple = DOUBLE + DOUBLE + DOUBLE;
+      const tripleSingle = SINGLE + SINGLE + SINGLE;
+      const quote = rest.slice(0, 3) === triple
+        ? triple
+        : rest.slice(0, 3) === tripleSingle
+          ? tripleSingle
+          : null;
+      if (quote) {
+        const close = rest.indexOf(quote, 3);
+        if (close === -1) {
+          out += '<span class="' + SPAN.s + '">' + esc(rest) + '</span>';
+          return { html: out, state: { block: quote } };
+        }
+        out += '<span class="' + SPAN.s + '">' + esc(rest.slice(0, close + 3)) + '</span>';
+        i += close + 3;
+        continue;
+      }
+    }
+
+    // A string. Scanned by hand rather than by regular expression: the
+    // pattern needs both quote characters and a backslash, and every one of
+    // them has to survive being nested inside a template literal.
+    const quote = rest[0];
+    if (quote === DOUBLE || quote === SINGLE || quote === BACKTICK) {
+      let j = 1;
+      let closed = false;
+      while (j < rest.length) {
+        if (rest[j] === BACKSLASH) { j += 2; continue; }
+        if (rest[j] === quote) { j += 1; closed = true; break; }
+        j += 1;
+      }
+      const literal = rest.slice(0, j);
+      out += '<span class="' + SPAN.s + '">' + esc(literal) + '</span>';
+      // Only a template literal may legitimately run past the line.
+      if (!closed && quote === BACKTICK) return { html: out, state: { block: BACKTICK } };
+      if (!closed) break;
+      i += literal.length;
+      continue;
+    }
+
+    m = rest.match(/^\\d[\\w.]*/);
+    if (m) { out += '<span class="' + SPAN.n + '">' + esc(m[0]) + '</span>'; i += m[0].length; continue; }
+
+    m = rest.match(/^[A-Za-z_$][\\w$]*/);
+    if (m) {
+      const word = m[0];
+      const after = rest.slice(word.length).match(/^\\s*\\(/);
+      const cls = keywords.has(word)
+        ? SPAN.k
+        : /^[A-Z]/.test(word)
+          ? SPAN.t
+          : after
+            ? SPAN.f
+            : null;
+      out += cls ? '<span class="' + cls + '">' + esc(word) + '</span>' : esc(word);
+      i += word.length;
+      continue;
+    }
+
+    m = rest.match(/^[^\\w\\s$]+/);
+    if (m) { out += '<span class="' + SPAN.p + '">' + esc(m[0]) + '</span>'; i += m[0].length; continue; }
+
+    m = rest.match(/^\\s+/);
+    if (m) { out += esc(m[0]); i += m[0].length; continue; }
+
+    out += esc(rest[0]);
+    i += 1;
+  }
+
+  return { html: out, state };
+}
+
 /** Column three: the file, with the lines to act on shaded, and what to do. */
 function codePane() {
   if (!openFile) {
@@ -984,20 +1171,79 @@ function codePane() {
   const focusFrom = selected ? selected.line : null;
   const focusTo = selected ? selected.line + selected.loc - 1 : null;
 
-  const rows = file.source.map((text, i) => {
-    const n = i + 1;
-    const severity = lineSeverity.get(n);
-    const inFocus = focusFrom !== null && n >= focusFrom && n <= focusTo;
-    const cls = 'code-line' + (severity ? ' sev-' + severity : '') + (inFocus ? ' is-focus' : '');
-    const anchor = inFocus && n === focusFrom ? ' id="focus-line"' : '';
-    return '<div class="' + cls + '"' + anchor +
-      (severity ? ' data-finding="' + esc(lineFinding.get(n)) + '"' : '') + '>' +
-      '<span class="code-n">' + n + '</span>' +
-      '<span class="code-text">' + esc(text || ' ') + '</span></div>';
-  }).join('');
+  /*
+   * Fold the quiet stretches.
+   *
+   * A finding sits inside a file of hundreds of lines, and scrolling past the
+   * untouched ones to find it is the work this page is meant to remove. Lines
+   * near something worth reading stay; long runs of nothing collapse to a row
+   * that says how many, and opens when clicked.
+   */
+  const CONTEXT = 4;
+  const MIN_FOLD = 10;
+  const keep = new Set();
+  const total = file.source.length;
+  const mark = (from, to) => {
+    for (let n = Math.max(1, from - CONTEXT); n <= Math.min(total, to + CONTEXT); n++) keep.add(n);
+  };
+  for (const m of file.marks) mark(m.from, m.to);
+  if (focusFrom !== null) mark(focusFrom, focusTo);
+  // A file with nothing to say about it is shown whole rather than folded away.
+  if (keep.size === 0) for (let n = 1; n <= total; n++) keep.add(n);
+  for (const n of expandedFolds) keep.add(n);
+
+  const lang = /\\.(py)$/.test(file.path) ? 'py' : 'js';
+  let state = { block: null };
+  const rows = [];
+  let n = 1;
+
+  while (n <= total) {
+    if (keep.has(n)) {
+      const severity = lineSeverity.get(n);
+      const inFocus = focusFrom !== null && n >= focusFrom && n <= focusTo;
+      const highlighted = highlightLine(file.source[n - 1], lang, state);
+      state = highlighted.state;
+      const cls = 'code-line' + (severity ? ' sev-' + severity : '') + (inFocus ? ' is-focus' : '');
+      rows.push(
+        '<div class="' + cls + '"' + (inFocus && n === focusFrom ? ' id="focus-line"' : '') +
+          (severity ? ' data-finding="' + esc(lineFinding.get(n)) + '"' : '') + '>' +
+          '<span class="code-n">' + n + '</span>' +
+          '<span class="code-text">' + (highlighted.html || ' ') + '</span></div>',
+      );
+      n++;
+      continue;
+    }
+
+    let end = n;
+    while (end <= total && !keep.has(end)) end++;
+    const length = end - n;
+
+    if (length < MIN_FOLD) {
+      // Too short to be worth hiding; show it and keep the highlighter in step.
+      for (let k = n; k < end; k++) {
+        const highlighted = highlightLine(file.source[k - 1], lang, state);
+        state = highlighted.state;
+        rows.push(
+          '<div class="code-line"><span class="code-n">' + k + '</span>' +
+            '<span class="code-text">' + (highlighted.html || ' ') + '</span></div>',
+        );
+      }
+    } else {
+      // Folded lines still pass through the highlighter, or a block comment
+      // opened inside the fold would colour everything after it.
+      for (let k = n; k < end; k++) state = highlightLine(file.source[k - 1], lang, state).state;
+      rows.push(
+        '<button class="fold" data-fold="' + n + '" data-fold-end="' + (end - 1) + '">' +
+          '<span class="fold-mark">⋯</span>' +
+          '<span class="fold-text">' + length + ' unremarkable lines</span>' +
+        '</button>',
+      );
+    }
+    n = end;
+  }
 
   return head + '<div class="pane-scroll code-scroll">' + actions +
-    '<div class="code">' + rows + '</div></div>';
+    '<div class="code">' + rows.join('') + '</div></div>';
 }
 
 /** One finding, stated as a problem and a remedy. */
@@ -1172,6 +1418,7 @@ app.addEventListener('click', (event) => {
     const match = target && wanted ? target.symbols.find((sym) => sym.name === wanted) : null;
     openSymbol = match ? match.id : null;
     symbolFilter = '';
+    expandedFolds = new Set();
     repaintExplorer();
     return;
   }
@@ -1210,11 +1457,21 @@ app.addEventListener('click', (event) => {
     return;
   }
 
+  const fold = event.target.closest('[data-fold]');
+  if (fold) {
+    const from = Number(fold.dataset.fold);
+    const to = Number(fold.dataset.foldEnd);
+    for (let n = from; n <= to; n++) expandedFolds.add(n);
+    repaintExplorer();
+    return;
+  }
+
   const fileButton = event.target.closest('[data-file]');
   if (fileButton) {
     openFile = fileButton.dataset.file;
     openSymbol = null;
     symbolFilter = '';
+    expandedFolds = new Set();
     repaintExplorer();
     return;
   }
@@ -1225,6 +1482,7 @@ app.addEventListener('click', (event) => {
     openFile = box.dataset.path;
     openSymbol = null;
     symbolFilter = '';
+    expandedFolds = new Set();
     showMap = false;
     repaintExplorer();
   }
