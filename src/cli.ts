@@ -15,7 +15,9 @@ ${bold('instantiate')} — see what is actually in your codebase
   ${bold('dead')}                 code nothing reaches
   ${bold('dupes')}                symbols that do the same job
   ${bold('drift')}                conventions done more than one way
+  ${bold('conflicts')}            one fact with two different answers
   ${bold('concepts')}             what this codebase is made of
+  ${bold('trend')} [--days n]     how the numbers moved over git history
   ${bold('why')} <symbol>         where a symbol is declared, called and used
   ${bold('report')} [--out f]     write a standalone HTML report
   ${bold('serve')} [--port n]     live UI on localhost
@@ -27,6 +29,8 @@ ${bold('instantiate')} — see what is actually in your codebase
 
   ${dim('--root <dir>     project root (default: cwd)')}
   ${dim('--limit <n>      findings to show (default: the noise budget, 20)')}
+  ${dim('--days <n>       history window for trend (default: 90)')}
+  ${dim('--points <n>     samples across that window (default: 10)')}
   ${dim('--json           machine-readable output')}
   ${dim('--all            ignore dismissals')}
 `;
@@ -40,6 +44,8 @@ interface Args {
   all: boolean;
   out?: string;
   port: number;
+  days: number;
+  points: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -50,6 +56,8 @@ function parseArgs(argv: string[]): Args {
     json: false,
     all: false,
     port: 4321,
+    days: 90,
+    points: 10,
   };
 
   const rest: string[] = [];
@@ -59,6 +67,8 @@ function parseArgs(argv: string[]): Args {
     else if (arg === '--limit') args.limit = Number(argv[++i]);
     else if (arg === '--out') args.out = argv[++i];
     else if (arg === '--port') args.port = Number(argv[++i]);
+    else if (arg === '--days') args.days = Number(argv[++i]);
+    else if (arg === '--points') args.points = Number(argv[++i]);
     else if (arg === '--json') args.json = true;
     else if (arg === '--all') args.all = true;
     else if (arg === '--help' || arg === '-h') args.command = 'help';
@@ -88,6 +98,11 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (args.command === 'trend') {
+    const { runTrend } = await import('./report/trend.js');
+    return runTrend(args.root, args.days, args.points, args.json);
+  }
+
   if (args.command === 'config') {
     const { loadConfig } = await import('./config.js');
     console.log(describeConfig(loadConfig(args.root)));
@@ -112,8 +127,14 @@ async function main(): Promise<number> {
 
     case 'dead':
     case 'dupes':
-    case 'drift': {
-      const kind = args.command === 'dupes' ? 'duplicate' : args.command;
+    case 'drift':
+    case 'conflicts': {
+      const kind =
+        args.command === 'dupes'
+          ? 'duplicate'
+          : args.command === 'conflicts'
+            ? 'contradiction'
+            : args.command;
       const subset = all.filter((f) => f.kind === kind);
       if (args.json) {
         console.log(JSON.stringify(subset, null, 2));
@@ -216,9 +237,14 @@ async function main(): Promise<number> {
 }
 
 main()
-  .then((code) => process.exit(code))
+  .then((code) => {
+    // Never process.exit() here: on a pipe, stdout is buffered and exiting
+    // discards whatever has not flushed, which silently truncated large
+    // --json output midway through.
+    process.exitCode = code;
+  })
   .catch((error: unknown) => {
     console.error(`\n${red('✗')} ${error instanceof Error ? error.message : String(error)}`);
     if (process.env.DEBUG) console.error(error);
-    process.exit(1);
+    process.exitCode = 1;
   });

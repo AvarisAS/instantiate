@@ -57,7 +57,7 @@ export interface CodeGraph {
   createdAt: number;
 }
 
-export type FindingKind = 'dead' | 'duplicate' | 'drift' | 'orphan-file';
+export type FindingKind = 'dead' | 'duplicate' | 'drift' | 'contradiction' | 'orphan-file';
 
 export type Severity = 'high' | 'medium' | 'low';
 
@@ -105,6 +105,7 @@ export interface Budget {
   dead: number;
   duplicate: number;
   drift: number;
+  contradiction: number;
   createdAt: number;
 }
 
@@ -123,6 +124,7 @@ export interface Stats {
   deadLoc: number;
   duplicateLoc: number;
   driftCount: number;
+  contradictionCount: number;
   indexMs: number;
   analyseMs: number;
 }

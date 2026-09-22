@@ -78,12 +78,13 @@ const TOOLS: Tool[] = [
   {
     name: 'list_findings',
     description:
-      'Current dead code, duplicate clusters and convention drift, ranked. Use this to find ' +
-      'the established convention in this codebase before adding code that picks a different one.',
+      'Current dead code, duplicate clusters, contradictions and convention drift, ranked. ' +
+      'Use this to find the established convention in this codebase before adding code that ' +
+      'picks a different one, and to see where the codebase already disagrees with itself.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['all', 'dead', 'duplicate', 'drift'] },
+        kind: { type: 'string', enum: ['all', 'dead', 'duplicate', 'drift', 'contradiction'] },
         limit: { type: 'number' },
       },
     },
@@ -331,7 +332,7 @@ function listConcepts(result: ScanResult): string {
 }
 
 function listFindings(kind: string, limit: number, result: ScanResult): string {
-  const wanted = kind === 'dupes' ? 'duplicate' : kind;
+  const wanted = kind === 'dupes' ? 'duplicate' : kind === 'conflicts' ? 'contradiction' : kind;
   const list = (wanted === 'all' ? result.findings : result.findings.filter((f) => f.kind === wanted)).slice(
     0,
     Math.max(1, Math.min(limit, 50)),

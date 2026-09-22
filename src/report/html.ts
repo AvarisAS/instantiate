@@ -178,6 +178,14 @@ function snippetsFor(result: ScanResult, finding: Finding): Snippet[] {
       .filter((s): s is Snippet => !!s);
   }
 
+  if (finding.kind === 'contradiction') {
+    const variants = (finding.evidence?.variants ?? []) as Array<{ file: string; line: number }>;
+    return variants
+      .slice(0, 6)
+      .map((v) => snippet(root, v.file, Math.max(1, v.line), v.line + 8))
+      .filter((s): s is Snippet => !!s);
+  }
+
   if (finding.kind === 'drift') {
     const deviants = (finding.evidence?.deviants ?? []) as Array<{ file: string; line: number }>;
     return deviants
@@ -289,6 +297,13 @@ pre .ln { color: var(--muted); opacity: 0.55; user-select: none; display: inline
           width: 3ch; text-align: right; margin-right: 10px; }
 .snip-head { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 0 0 4px; }
 
+.variants { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+.variants th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px;
+               text-transform: uppercase; letter-spacing: 0.06em; padding: 0 10px 6px 0; }
+.variants td { padding: 5px 10px 5px 0; border-top: 1px solid var(--line);
+               font-family: var(--mono); font-size: 12px; }
+.variants code { background: color-mix(in srgb, var(--high) 14%, transparent);
+                 padding: 1px 6px; border-radius: 4px; }
 .bars { display: grid; gap: 4px; margin: 12px 0; }
 .bar-row { display: grid; grid-template-columns: minmax(110px, 160px) 1fr 44px; gap: 10px;
            align-items: center; font-size: 12.5px; }
@@ -404,6 +419,17 @@ function snippetHtml(s) {
   return '<div><p class="snip-head">' + esc(s.file) + ':' + s.startLine + '</p><pre>' + lines + '</pre></div>';
 }
 
+function conflictTable(f) {
+  const variants = (f.evidence && f.evidence.variants) || [];
+  if (!variants.length) return '';
+  // The disagreement itself, stated plainly: value, and where it is claimed.
+  return '<table class="variants"><thead><tr><th>value</th><th>where</th></tr></thead><tbody>' +
+    variants.map((v) =>
+      '<tr><td><code>' + esc(v.value) + '</code></td>' +
+      '<td>' + esc(v.symbol || '') + ' — ' + esc(v.file) + ':' + v.line + '</td></tr>').join('') +
+    '</tbody></table>';
+}
+
 function driftBars(f) {
   const rows = (f.evidence && f.evidence.breakdown) || [];
   if (!rows.length) return '';
@@ -418,16 +444,18 @@ function driftBars(f) {
 }
 
 function findingHtml(f) {
-  const sideBySide = f.kind === 'duplicate' && f.snippets.length > 1;
+  const sideBySide = (f.kind === 'duplicate' || f.kind === 'contradiction') && f.snippets.length > 1;
+  const unit = f.kind === 'contradiction' ? f.loc + ' sites' : f.loc + 'L';
   return '<details class="finding" id="' + esc(f.id) + '" data-kind="' + f.kind + '">' +
     '<summary>' +
       '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
       '<span class="f-title">' + esc(f.title) + '</span>' +
-      '<span class="f-meta">' + f.loc + 'L · ' + Math.round(f.score * 100) + '%</span>' +
+      '<span class="f-meta">' + unit + ' · ' + Math.round(f.score * 100) + '%</span>' +
     '</summary>' +
     '<div class="f-body">' +
       '<p class="f-detail">' + esc(f.detail) + '</p>' +
       (f.kind === 'drift' ? driftBars(f) : '') +
+      (f.kind === 'contradiction' ? conflictTable(f) : '') +
       '<div class="snips' + (sideBySide ? ' side-by-side' : '') + '">' +
         f.snippets.map(snippetHtml).join('') +
       '</div>' +
@@ -441,7 +469,7 @@ function findingsSection() {
   const counts = { all: all.length };
   for (const f of all) counts[f.kind] = (counts[f.kind] || 0) + 1;
 
-  const tabs = ['all', 'dead', 'duplicate', 'drift']
+  const tabs = ['all', 'dead', 'duplicate', 'contradiction', 'drift']
     .filter((k) => k === 'all' || counts[k])
     .map((k) => '<button data-filter="' + k + '" aria-pressed="' + (filter === k) + '">' +
       k + ' <span class="bar-num">' + (counts[k] || 0) + '</span></button>').join('');
@@ -473,6 +501,8 @@ function render() {
         '<span class="l">lines of re-implementation</span></div>' +
       '<div class="tile"><span class="n">' + s.driftCount + '</span>' +
         '<span class="l">conventions done two ways</span></div>' +
+      '<div class="tile"><span class="n">' + s.contradictionCount + '</span>' +
+        '<span class="l">values stated two ways</span></div>' +
     '</div>' +
 
     '<h2>The map</h2>' +

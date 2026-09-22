@@ -29,6 +29,7 @@ export function writeBudget(root: string, stats: Stats): Budget {
     dead: stats.deadLoc,
     duplicate: stats.duplicateLoc,
     drift: stats.driftCount,
+    contradiction: stats.contradictionCount,
     createdAt: Date.now(),
   };
   mkdirSync(join(root, '.instantiate'), { recursive: true });
@@ -46,6 +47,9 @@ export function checkBudget(budget: Budget, stats: Stats): BudgetCheck {
     ['dead lines', stats.deadLoc, budget.dead],
     ['duplicated lines', stats.duplicateLoc, budget.duplicate],
     ['drifting conventions', stats.driftCount, budget.drift],
+    // An older budget file predates this metric; treat it as "none allowed"
+    // only once it has been recorded, never as an accidental instant failure.
+    ['contradictions', stats.contradictionCount, budget.contradiction ?? stats.contradictionCount],
   ];
 
   const lines: string[] = [];

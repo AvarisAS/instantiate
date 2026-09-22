@@ -13,10 +13,14 @@ export function renderSummary(stats: Stats, warnings: string[]): string {
     ['dead', stats.deadLoc, `${stats.deadLoc} lines nothing reaches`],
     ['duplicate', stats.duplicateLoc, `${stats.duplicateLoc} lines of redundant re-implementation`],
     ['drift', stats.driftCount, `${plural(stats.driftCount, 'convention')} done more than one way`],
+    ['conflict', stats.contradictionCount, `${plural(stats.contradictionCount, 'value')} stated two different ways`],
   ];
 
   for (const [label, value, description] of rows) {
-    const share = label === 'drift' ? Math.min(value / 5, 1) : value / Math.max(stats.loc, 1);
+    const share =
+      label === 'drift' || label === 'conflict'
+        ? Math.min(value / 5, 1)
+        : value / Math.max(stats.loc, 1);
     lines.push(`  ${label.padEnd(10)} ${bar(share, 16)} ${description}`);
   }
 
@@ -46,7 +50,8 @@ export function renderFindings(findings: Finding[], limit: number): string {
     const colour = severityColour(finding.severity);
     const rank = dim(String(i + 1).padStart(2));
     lines.push(`${rank} ${colour(finding.severity.padEnd(6))} ${bold(finding.title)}`);
-    lines.push(`   ${cyan(`${finding.file}:${finding.line}`)} ${dim(`· ${finding.loc} lines · ${Math.round(finding.score * 100)}% confidence`)}`);
+    const unit = finding.kind === 'contradiction' ? plural(finding.loc, 'site') : `${finding.loc} lines`;
+    lines.push(`   ${cyan(`${finding.file}:${finding.line}`)} ${dim(`· ${unit} · ${Math.round(finding.score * 100)}% confidence`)}`);
     lines.push(`   ${dim(finding.detail)}`);
     lines.push('');
   });

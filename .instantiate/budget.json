@@ -1,6 +1,7 @@
 {
   "dead": 2,
-  "duplicate": 0,
-  "drift": 2,
-  "createdAt": 1790062631622
+  "duplicate": 88,
+  "drift": 3,
+  "contradiction": 0,
+  "createdAt": 1790065031828
 }

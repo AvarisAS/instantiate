@@ -1,6 +1,6 @@
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { CodeGraph, CodeSymbol, Edge, FileRecord, SymbolKind } from '../types.js';
 import type { Config } from '../config.js';
@@ -33,6 +33,7 @@ export function buildGraph(config: Config): CodeGraph {
       hash: createHash('sha1').update(text).digest('hex').slice(0, 16),
       indexedAt: Date.now(),
     });
+    declareModule(sf, rel, text, symbols, declToId);
     collectDeclarations(sf, rel, sf, symbols, declToId);
   }
 
@@ -43,6 +44,8 @@ export function buildGraph(config: Config): CodeGraph {
     collectEdges(sf, rel, sf, checker, declToId, symbols, edges, config, program, byFileName);
   }
 
+  collectSatelliteEdges(config, byFileName, checker, declToId, edges);
+
   return {
     root: config.root,
     symbols,
@@ -51,6 +54,120 @@ export function buildGraph(config: Config): CodeGraph {
     entrypoints: [],
     createdAt: Date.now(),
   };
+}
+
+/**
+ * Imports written in files we do not index: MDX pages, single-file components,
+ * templates.
+ *
+ * A documentation site imports its React components from `.mdx`, and a Vue app
+ * imports helpers from `.vue`. Neither is TypeScript, so neither appears in the
+ * program, and everything they use looks unreachable. Reading just the import
+ * statements is cheap and turns a large class of false positives into edges.
+ */
+function collectSatelliteEdges(
+  config: Config,
+  byFileName: Map<string, ts.SourceFile>,
+  checker: ts.TypeChecker,
+  declToId: Map<ts.Node, string>,
+  edges: Edge[],
+): void {
+  const importPattern = /(?:^|\n)\s*import\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+
+  for (const file of discoverFiles(config, config.satellites)) {
+    let text: string;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    const rel = relPath(config.root, file);
+    let match: RegExpExecArray | null;
+    importPattern.lastIndex = 0;
+
+    while ((match = importPattern.exec(text)) !== null) {
+      const specifier = match[1];
+      if (!specifier.startsWith('.') && !specifier.startsWith('#') && !specifier.startsWith('@/')) {
+        continue; // A package import cannot reach code in this repository.
+      }
+      const target = resolveSatellite(specifier, file, config.root, byFileName);
+      if (!target) continue;
+
+      const line = text.slice(0, match.index).split('\n').length;
+      const from = `${rel}#<satellite>`;
+      // Which named export is used cannot be told apart reliably here, so treat
+      // the whole module as used — the same over-approximation as `import()`.
+      for (const exported of exportsOf(target, checker, declToId)) {
+        edges.push({ from, to: exported, kind: 'references', file: rel, line });
+      }
+      edges.push({
+        from,
+        to: `${relPath(config.root, target.fileName)}#<module>`,
+        kind: 'imports',
+        file: rel,
+        line,
+      });
+    }
+  }
+}
+
+function resolveSatellite(
+  specifier: string,
+  from: string,
+  root: string,
+  byFileName: Map<string, ts.SourceFile>,
+): ts.SourceFile | undefined {
+  // `@/x` is the near-universal alias for the project root or its src directory.
+  const bases = specifier.startsWith('@/')
+    ? [join(root, specifier.slice(2)), join(root, 'src', specifier.slice(2))]
+    : [join(dirname(from), specifier)];
+
+  for (const base of bases) {
+    const stem = base.replace(/\.(js|mjs|cjs|jsx)$/, '');
+    for (const extension of ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']) {
+      const hit = byFileName.get(stem + extension);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Every file gets a symbol standing for the module itself.
+ *
+ * Without one, any reference in top-level code — an import specifier, a
+ * re-export clause, a call at module scope — has no enclosing symbol, so it
+ * produces no edge at all. That single gap made reachability near-vacuous:
+ * a test file whose whole body sits inside a `describe()` callback rooted
+ * nothing, and a barrel of `export … from` rooted nothing either.
+ *
+ * Registering the SourceFile node itself means enclosingSymbolId() walks up to
+ * the module and attributes the reference to it, with no other change needed.
+ */
+function declareModule(
+  sf: ts.SourceFile,
+  file: string,
+  text: string,
+  symbols: Map<string, CodeSymbol>,
+  declToId: Map<ts.Node, string>,
+): void {
+  const id = `${file}#<module>`;
+  symbols.set(id, {
+    id,
+    name: file,
+    kind: 'module',
+    file,
+    line: 1,
+    endLine: countLines(text),
+    // Importing a module runs it, so it is reachable from outside by definition.
+    exported: true,
+    // Lines belong to the declarations inside, not to the module wrapper, or
+    // every file would be counted twice in every total.
+    loc: 0,
+    body: '',
+    signature: 'module',
+  });
+  declToId.set(sf, id);
 }
 
 function createProgram(config: Config, files: string[]): ts.Program {
@@ -80,7 +197,7 @@ function createProgram(config: Config, files: string[]): ts.Program {
   return ts.createProgram({ rootNames: files, options });
 }
 
-function discoverFiles(config: Config): string[] {
+function discoverFiles(config: Config, include: string[] = config.include): string[] {
   const out: string[] = [];
 
   const walk = (dir: string): void => {
@@ -103,7 +220,7 @@ function discoverFiles(config: Config): string[] {
       }
       if (st.isDirectory()) {
         walk(abs);
-      } else if (matchesAny(rel, config.include)) {
+      } else if (matchesAny(rel, include)) {
         out.push(abs);
       }
     }
@@ -287,7 +404,7 @@ function collectEdges(
     ts.isStringLiteralLike(node.arguments[0]) &&
     enclosing
   ) {
-    const target = resolveModule(node.arguments[0].text, sf, program, byFileName);
+    const target = resolveModule(node.arguments[0].text, sf, program, byFileName, config.root);
     if (target) {
       const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
       // We cannot tell which export is used, so every export of the module is
@@ -299,7 +416,7 @@ function collectEdges(
     }
   }
 
-  if (ts.isIdentifier(node) && enclosing) {
+  if ((ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) && enclosing) {
     // Skip the identifier that *is* the declaration's own name.
     const parent = node.parent;
     const isOwnName =
@@ -340,6 +457,46 @@ function collectEdges(
     }
   }
 
+  // `import './x'`, `export { y } from './x'`, `export * from './x'`.
+  if (
+    (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+    node.moduleSpecifier &&
+    ts.isStringLiteralLike(node.moduleSpecifier) &&
+    enclosing
+  ) {
+    const specifier = node.moduleSpecifier.text;
+    const targets = specifier.startsWith('#')
+      ? resolveSubpath(specifier, config.root, byFileName)
+      : [resolveModule(specifier, sf, program, byFileName, config.root)];
+
+    for (const target of targets) {
+      if (!target) continue;
+      const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      const targetModule = `${relPath(config.root, target.fileName)}#<module>`;
+      edges.push({ from: enclosing, to: targetModule, kind: 'imports', file, line: pos.line + 1 });
+
+      // `export * from './x'` names nothing, so no identifier resolves and the
+      // re-exported symbols would look unreferenced. Expand it explicitly.
+      const starred =
+        ts.isExportDeclaration(node) &&
+        (!node.exportClause || ts.isNamespaceExport(node.exportClause));
+      // `import * as tags from './x'` is almost always followed by `tags[key]`,
+      // a dynamic lookup no static graph can trace. Every export of the module
+      // is therefore potentially used, and hono's entire JSX intrinsic-element
+      // set looked dead because of exactly this pattern.
+      const namespaceImport =
+        ts.isImportDeclaration(node) &&
+        !!node.importClause?.namedBindings &&
+        ts.isNamespaceImport(node.importClause.namedBindings);
+
+      if (starred || namespaceImport || specifier.startsWith('#')) {
+        for (const exported of exportsOf(target, checker, declToId)) {
+          edges.push({ from: enclosing, to: exported, kind: 'references', file, line: pos.line + 1 });
+        }
+      }
+    }
+  }
+
   if (ts.isHeritageClause(node)) {
     const kind = node.token === ts.SyntaxKind.ExtendsKeyword ? 'extends' : 'implements';
     for (const type of node.types) {
@@ -357,13 +514,77 @@ function collectEdges(
   );
 }
 
+/**
+ * Node subpath imports (`#supports-color`), declared in package.json `imports`.
+ * Resolution does not follow them without the right module settings, so a
+ * package that vendors code behind a `#` alias looks entirely unreachable —
+ * which is exactly what happened to chalk's bundled supports-color.
+ */
+function subpathImports(root: string): Map<string, string[]> {
+  const cached = subpathCache.get(root);
+  if (cached) return cached;
+
+  const map = new Map<string, string[]>();
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const collect = (key: string, value: unknown): void => {
+      if (typeof value === 'string') {
+        const list = map.get(key) ?? [];
+        const path = value.replace(/^\.\//, '');
+        if (!list.includes(path)) list.push(path);
+        map.set(key, list);
+        return;
+      }
+      if (value && typeof value === 'object') {
+        for (const nested of Object.values(value as Record<string, unknown>)) collect(key, nested);
+      }
+    };
+    for (const [key, value] of Object.entries(pkg.imports ?? {})) collect(key, value);
+  } catch {
+    // No package.json, or no imports field: nothing to resolve.
+  }
+  subpathCache.set(root, map);
+  return map;
+}
+
+const subpathCache = new Map<string, Map<string, string[]>>();
+
+/**
+ * Every file a subpath import can select, across conditions.
+ *
+ * `#supports-color` resolves to the node build or the browser build depending
+ * on the consumer, so both are reachable. Returning only the first left the
+ * browser variant looking entirely dead.
+ */
+function resolveSubpath(
+  specifier: string,
+  root: string,
+  byFileName: Map<string, ts.SourceFile>,
+): ts.SourceFile[] {
+  const out: ts.SourceFile[] = [];
+  for (const mapped of subpathImports(root).get(specifier) ?? []) {
+    const base = join(root, mapped).replace(/\.(js|mjs|cjs)$/, '');
+    let hit: ts.SourceFile | undefined;
+    for (const extension of ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js']) {
+      hit = byFileName.get(base + extension);
+      if (hit) break;
+    }
+    hit ??= byFileName.get(join(root, mapped));
+    if (hit && !out.includes(hit)) out.push(hit);
+  }
+  return out;
+}
+
 /** Resolve a module specifier to an indexed source file, if it is one of ours. */
 function resolveModule(
   specifier: string,
   from: ts.SourceFile,
   program: ts.Program,
   byFileName: Map<string, ts.SourceFile>,
+  root: string,
 ): ts.SourceFile | undefined {
+  if (specifier.startsWith('#')) return resolveSubpath(specifier, root, byFileName)[0];
+
   const resolved = ts.resolveModuleName(
     specifier,
     from.fileName,

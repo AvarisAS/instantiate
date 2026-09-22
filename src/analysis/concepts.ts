@@ -177,16 +177,18 @@ function nameOf(
   const top = scored.slice(0, 2).map(([word]) => word);
 
   if (folderCoherent) {
-    const folder = topDir.split('/').pop()!;
+    const folder = topDir.split('/').filter(Boolean).pop() ?? '';
     const distinctive = top.find((w) => w !== folder);
     return distinctive ? `${title(folder)} · ${title(distinctive)}` : title(folder);
   }
 
-  if (top.length === 0) return dirOf(symbols[0]?.file ?? '.');
-  return top.map(title).join(' ');
+  const named = top.map(title).filter(Boolean);
+  if (named.length === 0) return dirOf(symbols[0]?.file ?? '.');
+  return named.join(' ');
 }
 
 function title(word: string): string {
+  if (!word) return '';
   return word[0].toUpperCase() + word.slice(1);
 }
 

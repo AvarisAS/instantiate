@@ -26,6 +26,11 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
   graph.entrypoints = entryFiles;
 
   const roots = new Set<string>();
+  // Every satellite file is a root: an MDX page or a single-file component is
+  // rendered by its framework, so whatever it imports is live.
+  for (const edge of graph.edges) {
+    if (edge.from.endsWith('#<satellite>')) roots.add(edge.from);
+  }
   for (const symbol of graph.symbols.values()) {
     // Everything in an entrypoint file is reachable: module-level code runs.
     if (entryFiles.includes(symbol.file)) roots.add(symbol.id);

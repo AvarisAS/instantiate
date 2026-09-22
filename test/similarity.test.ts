@@ -54,3 +54,15 @@ test('cosine is bounded and symmetric', () => {
   assert.equal(cosine(a, b), cosine(b, a));
   assert.ok(cosine(a, a) > 0.999 && cosine(a, a) <= 1.0001);
 });
+
+test('words that collide with Object.prototype do not resolve to inherited members', () => {
+  // A plain object literal would return the native `Object` function here, which
+  // crashed concept naming on the first real codebase containing a symbol
+  // called `constructor`.
+  for (const word of ['constructor', 'valueOf', 'prototype']) {
+    for (const part of splitIdentifier(word)) {
+      assert.equal(typeof part, 'string', `${word} produced a non-string`);
+    }
+  }
+  assert.deepEqual(splitIdentifier('constructor'), ['constructor']);
+});

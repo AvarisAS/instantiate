@@ -7,6 +7,7 @@ import { findDeadCode } from './analysis/dead.js';
 import { findDuplicates } from './analysis/dupes.js';
 import { findConcepts } from './analysis/concepts.js';
 import { findDrift } from './analysis/drift.js';
+import { findContradictions } from './analysis/contradiction.js';
 
 export interface ScanOptions {
   root?: string;
@@ -33,6 +34,7 @@ export function scan(options: ScanOptions = {}): ScanResult {
   const dead = findDeadCode(graph, config);
   const dupes = findDuplicates(graph, config);
   const drift = findDrift(graph);
+  const contradictions = findContradictions(graph);
   const concepts = findConcepts(graph, config.concepts);
   const analyseMs = Date.now() - analyseStart;
 
@@ -54,11 +56,17 @@ export function scan(options: ScanOptions = {}): ScanResult {
     deadLoc: dead.deadLoc,
     duplicateLoc: dupes.duplicateLoc,
     driftCount: drift.count,
+    contradictionCount: contradictions.count,
     indexMs,
     analyseMs,
   };
 
-  const findings = rank([...dead.findings, ...dupes.findings, ...drift.findings]);
+  const findings = rank([
+    ...dead.findings,
+    ...dupes.findings,
+    ...drift.findings,
+    ...contradictions.findings,
+  ]);
   return { graph, findings, concepts, stats, config, warnings };
 }
 
@@ -68,9 +76,18 @@ export function scan(options: ScanOptions = {}): ScanResult {
  * teaches people to ignore its own top line.
  */
 function withSeverity(finding: Finding): Finding {
-  const impact = finding.score * Math.log2(finding.loc + 2);
-  const severity = impact >= 3.5 ? 'high' : impact >= 1.8 ? 'medium' : 'low';
+  const severity = severityOf(finding);
   return finding.severity === severity ? finding : { ...finding, severity };
+}
+
+function severityOf(finding: Finding): Finding['severity'] {
+  // A contradiction's `loc` counts sites, not lines, so the size term does not
+  // apply: two call sites disagreeing about one value is serious at any size.
+  if (finding.kind === 'contradiction') {
+    return finding.score >= 0.8 ? 'high' : finding.score >= 0.5 ? 'medium' : 'low';
+  }
+  const impact = finding.score * Math.log2(finding.loc + 2);
+  return impact >= 3.5 ? 'high' : impact >= 1.8 ? 'medium' : 'low';
 }
 
 /**
@@ -86,10 +103,16 @@ export function rank(findings: Finding[]): Finding[] {
     .sort((a, b) => {
       // Impact is confidence times size; a confident 200-line deletion beats a
       // speculative one-liner every time.
-      const impact = b.score * Math.log2(b.loc + 2) - a.score * Math.log2(a.loc + 2);
+      const impact = weight(b) - weight(a);
       if (Math.abs(impact) > 0.001) return impact;
       return a.id.localeCompare(b.id);
     });
+}
+
+/** Ranking weight: confidence times size, except where size does not mean lines. */
+function weight(finding: Finding): number {
+  if (finding.kind === 'contradiction') return finding.score * 4;
+  return finding.score * Math.log2(finding.loc + 2);
 }
 
 export interface DismissalStore {
@@ -121,5 +144,13 @@ export function applyDismissals(findings: Finding[], store: DismissalStore): Fin
   return findings.filter((f) => !hidden.has(f.id));
 }
 
-export { loadConfig, buildGraph, findDeadCode, findDuplicates, findConcepts, findDrift };
+export {
+  loadConfig,
+  buildGraph,
+  findDeadCode,
+  findDuplicates,
+  findConcepts,
+  findDrift,
+  findContradictions,
+};
 export type { Config, CodeGraph, Finding, Stats, AnalysisResult };

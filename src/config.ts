@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import YAML from 'yaml';
 
@@ -10,6 +10,8 @@ export interface Config {
   publicApi: string[];
   include: string[];
   exclude: string[];
+  /** Non-code files scanned for imports, so what they use is not reported dead. */
+  satellites: string[];
   /** Cosine cut-off for the duplicate clusters. Calibrated per project on first scan. */
   dupeThreshold: number;
   /** Minimum lines before a symbol is a duplicate candidate. Kills trivial-adapter noise. */
@@ -38,6 +40,9 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi'> = {
   // and above, while the nearest unrelated pair sits below 0.50. The cut-off
   // goes in that gap, nearer the noise floor, because calibration raises it per
   // project and nothing can rescue a finding that was never generated.
+  // Files that are not code but do import it: MDX docs, single-file components,
+  // templates. They are never indexed, yet what they import is very much alive.
+  satellites: ['**/*.{mdx,md,vue,svelte,astro,html}'],
   dupeThreshold: 0.72,
   dupeMinLoc: 4,
   maxFindings: 20,
@@ -53,25 +58,15 @@ const CONFIG_NAMES = ['.instantiate.yml', '.instantiate.yaml', 'instantiate.yml'
 export function detectEntrypoints(root: string): { entrypoints: string[]; publicApi: string[] } {
   const entrypoints: string[] = [];
   const publicApi: string[] = [];
-  const pkgPath = join(root, 'package.json');
 
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-      // A published package's exports ARE the contract: never dead by definition.
-      for (const field of ['main', 'module', 'browser'] as const) {
-        if (typeof pkg[field] === 'string') publicApi.push(sourceOf(pkg[field]));
-      }
-      if (pkg.exports) collectExports(pkg.exports, publicApi);
-      if (pkg.bin) {
-        const bins = typeof pkg.bin === 'string' ? [pkg.bin] : Object.values(pkg.bin);
-        for (const b of bins) if (typeof b === 'string') entrypoints.push(sourceOf(b));
-      }
-      // A private package has no consumers, so its entry is a true entrypoint.
-      if (pkg.private && typeof pkg.main === 'string') entrypoints.push(sourceOf(pkg.main));
-    } catch {
-      // Malformed package.json is not fatal; fall through to conventions.
-    }
+  readPackage(root, '.', entrypoints, publicApi);
+
+  // A monorepo's root package.json describes the repository, not the code.
+  // Without reading each workspace, every package's public surface looks
+  // unreachable and the dead-code report becomes meaningless rather than empty.
+  const workspaces = workspaceDirs(root);
+  for (const dir of workspaces) {
+    readPackage(root, dir, entrypoints, publicApi);
   }
 
   for (const guess of [
@@ -82,34 +77,164 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
     if (existsSync(join(root, guess))) entrypoints.push(guess);
   }
 
-  // Framework conventions: files the framework calls, that nothing in-repo imports.
-  for (const dir of ['app', 'src/app', 'pages', 'src/pages']) {
-    if (existsSync(join(root, dir))) entrypoints.push(`${dir}/**/{page,layout,route,loading,error,middleware}.{ts,tsx,js,jsx}`);
+  // Framework conventions: files the framework calls, that nothing in-repo
+  // imports. Checked per workspace as well as at the root, since a monorepo
+  // keeps its site in packages/docs rather than at the top level.
+  for (const base of ['.', ...workspaces]) {
+    const prefix = base === '.' ? '' : `${base}/`;
+    for (const dir of ['app', 'src/app', 'pages', 'src/pages']) {
+      if (existsSync(join(root, prefix + dir))) {
+        entrypoints.push(`${prefix}${dir}/**/{page,layout,route,loading,error,not-found,middleware,template,default,sitemap,robots,opengraph-image,icon}.{ts,tsx,js,jsx,mts}`);
+      }
+    }
   }
-  if (existsSync(join(root, 'test')) || existsSync(join(root, 'tests'))) {
-    entrypoints.push('{test,tests}/**/*.{test,spec}.{ts,tsx,js,jsx}');
-  }
+  entrypoints.push('{test,tests,spec,__tests__}/**/*.{ts,tsx,js,jsx,mts,cts}');
   entrypoints.push('**/*.{test,spec}.{ts,tsx,js,jsx}');
+
+  // Scripts, benchmarks and examples are executed directly rather than imported.
+  // They are unreachable by construction, so reporting them is pure noise.
+  // Matched at any depth, since a monorepo keeps them in packages/bench and the
+  // like rather than at the root.
+  entrypoints.push(`**/{${SCRIPT_DIRS.join(',')}}/**/*.{ts,tsx,js,jsx,mts,cts}`);
+
+  // Vendored and generated code is somebody else's contract. Its unused exports
+  // are real, and they are not this repository's problem to act on.
+  publicApi.push('**/{vendor,vendored,third_party,third-party}/**/*.{ts,tsx,js,jsx,mts,cts}');
 
   return { entrypoints: unique(entrypoints), publicApi: unique(publicApi) };
 }
 
-/** Map a built artefact path back to its likely source, since we index source. */
-function sourceOf(p: string): string {
-  return p
-    .replace(/^\.\//, '')
-    .replace(/^(dist|build|lib|out)\//, 'src/')
-    .replace(/\.(js|mjs|cjs)$/, '.ts');
+/** Directories whose files are run, not imported. */
+const SCRIPT_DIRS = [
+  'scripts', 'script', 'bench', 'benchmark', 'benchmarks', 'perf', 'perf-measures',
+  'examples', 'example', 'tools', 'build', 'e2e', 'fixtures',
+];
+
+/** Workspace package directories, from `workspaces` or the usual layout. */
+function workspaceDirs(root: string): string[] {
+  const dirs = new Set<string>();
+  const patterns: string[] = [];
+
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const workspaces = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
+    if (Array.isArray(workspaces)) patterns.push(...workspaces.filter((w) => typeof w === 'string'));
+  } catch {
+    // No or malformed root package.json; fall back to the conventional layout.
+  }
+  if (existsSync(join(root, 'pnpm-workspace.yaml'))) patterns.push('packages/*', 'apps/*');
+  if (patterns.length === 0) patterns.push('packages/*', 'apps/*');
+
+  for (const pattern of patterns) {
+    // Only the single-level `dir/*` form is worth expanding; anything deeper is
+    // rare enough that an explicit config entry is the better answer.
+    const base = pattern.endsWith('/*') ? pattern.slice(0, -2) : undefined;
+    if (!base) {
+      if (existsSync(join(root, pattern, 'package.json'))) dirs.add(pattern);
+      continue;
+    }
+    let entries: string[];
+    try {
+      entries = readdirSync(join(root, base));
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const dir = `${base}/${entry}`;
+      if (existsSync(join(root, dir, 'package.json'))) dirs.add(dir);
+    }
+  }
+  return [...dirs];
 }
 
-function collectExports(node: unknown, out: string[]): void {
+/** Read one package.json and add whatever entrypoints and public surface it declares. */
+function readPackage(root: string, dir: string, entrypoints: string[], publicApi: string[]): void {
+  const prefix = dir === '.' ? '' : `${dir}/`;
+  const pkgPath = join(root, dir, 'package.json');
+  const resolve = (p: string): string | undefined => sourceOf(root, prefix + p.replace(/^\.\//, ''));
+
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      // A published package's exports ARE the contract: never dead by definition.
+      for (const field of ['main', 'module', 'browser'] as const) {
+        if (typeof pkg[field] === 'string') push(publicApi, resolve(pkg[field]));
+      }
+      if (pkg.exports) collectExports(root, prefix, pkg.exports, publicApi);
+      if (pkg.bin) {
+        const bins = typeof pkg.bin === 'string' ? [pkg.bin] : Object.values(pkg.bin);
+        for (const b of bins) if (typeof b === 'string') push(entrypoints, resolve(b));
+      }
+      // A private package has no consumers, so its entry is a true entrypoint.
+      if (pkg.private && typeof pkg.main === 'string') push(entrypoints, resolve(pkg.main));
+    } catch {
+      // Malformed package.json is not fatal; fall through to conventions.
+    }
+  }
+}
+
+/**
+ * Map a published artefact path back to the source file we actually index.
+ *
+ * A package's `exports` point at build output, and the shape of that output
+ * varies: `dist/index.js`, `dist/cjs/index.js`, `dist/types/index.d.ts`, or a
+ * plain `source/index.js` that is already the source. Rewriting blindly to
+ * `.ts` produced paths that exist in no repository, so every public export
+ * looked unreachable and the whole dead-code report became noise.
+ *
+ * So: generate candidates, keep the first that exists on disk, and fall back to
+ * the literal path only if nothing matches.
+ */
+function sourceOf(root: string, published: string): string | undefined {
+  const clean = published.replace(/^\.\//, '');
+  const roots = new Set<string>([clean]);
+
+  // Build directory to source directory.
+  const withoutBuildDir = clean.replace(/^(dist|build|lib|out|esm|cjs)\//, '');
+  roots.add(withoutBuildDir);
+  roots.add(`src/${withoutBuildDir}`);
+  roots.add(`source/${withoutBuildDir}`);
+
+  // Output layouts that nest by module format or by declarations.
+  const withoutFormatDir = withoutBuildDir.replace(/^(cjs|esm|mjs|types|typings)\//, '');
+  roots.add(`src/${withoutFormatDir}`);
+  roots.add(`source/${withoutFormatDir}`);
+
+  const candidates: string[] = [];
+  for (const base of roots) {
+    // A declaration file's implementation carries the same stem.
+    const stem = base.replace(/\.d\.ts$/, '').replace(/\.(js|mjs|cjs|jsx)$/, '');
+    if (base !== stem) {
+      for (const extension of ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts']) {
+        candidates.push(stem + extension);
+      }
+      candidates.push(`${stem}/index.ts`, `${stem}/index.js`);
+    }
+    // The published path may already be the source, as it is for a package
+    // that ships plain JavaScript.
+    candidates.push(base);
+  }
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(join(root, candidate))) return candidate;
+  }
+  return undefined;
+}
+
+function collectExports(root: string, prefix: string, node: unknown, out: string[]): void {
   if (typeof node === 'string') {
-    out.push(sourceOf(node));
+    push(out, sourceOf(root, prefix + node.replace(/^\.\//, '')));
     return;
   }
   if (node && typeof node === 'object') {
-    for (const value of Object.values(node as Record<string, unknown>)) collectExports(value, out);
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      collectExports(root, prefix, value, out);
+    }
   }
+}
+
+function push(out: string[], value: string | undefined): void {
+  if (value) out.push(value);
 }
 
 function unique(xs: string[]): string[] {

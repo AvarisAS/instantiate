@@ -1,6 +1,6 @@
 import type { CodeGraph, CodeSymbol, Finding } from '../types.js';
 import type { Config } from '../config.js';
-import { structuralBag, vocabularyBag, cosine, type Bag } from './similarity.js';
+import { structuralBag, vocabularyBag, cosine, splitIdentifier, type Bag } from './similarity.js';
 
 interface Candidate {
   symbol: CodeSymbol;
@@ -43,6 +43,10 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
   for (const symbol of graph.symbols.values()) {
     if (symbol.kind !== 'function' && symbol.kind !== 'method') continue;
     if (symbol.loc < config.dupeMinLoc) continue;
+    // Every Error subclass constructor is `super(message); this.name = '...'`.
+    // They are near-identical because the language requires it, not because
+    // anyone re-implemented anything, so they are not candidates at all.
+    if (symbol.name === 'constructor') continue;
     candidates.push({
       symbol,
       structure: structuralBag(symbol.body),
@@ -225,12 +229,40 @@ function cluster(pairs: Pair[], candidates: Candidate[], graph: CodeGraph): Dupe
   return out;
 }
 
+/**
+ * A deliberate naming family: `formatRfc850Date` and `formatAsctimeDate`, or
+ * `parseJson` and `parseYaml`.
+ *
+ * Names that share most of their words are a set someone designed, where the
+ * differing word *is* the point. That is the opposite of the case this tool
+ * exists for — three names with nothing in common doing one job, each written
+ * by someone who could not find the others.
+ */
+function isNamingFamily(group: DupeCluster): boolean {
+  const wordSets = group.members.map((m) => new Set(splitIdentifier(m.name)));
+  for (let i = 0; i < wordSets.length; i++) {
+    for (let j = i + 1; j < wordSets.length; j++) {
+      const a = wordSets[i];
+      const b = wordSets[j];
+      const shared = [...a].filter((w) => b.has(w)).length;
+      const smaller = Math.min(a.size, b.size);
+      // Most of the shorter name is shared, and something still differs.
+      if (smaller > 0 && shared >= 2 && shared / smaller >= 0.5 && shared < Math.max(a.size, b.size)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function rankScore(group: DupeCluster): number {
   let score = group.similarity;
   // Same file, adjacent: usually deliberate overloads a reader can already see.
   if (!group.crossFile) score -= 0.15;
   // One calls the other, so it is layering rather than redundancy.
   if (group.connected) score -= 0.4;
+  // A designed set of variants, where the differing word is the whole point.
+  if (isNamingFamily(group)) score -= 0.35;
   // More copies is stronger evidence that nobody knew the others existed.
   if (group.members.length > 2) score += 0.05;
   return Math.max(0.05, Math.min(1, Math.round(score * 100) / 100));
@@ -243,6 +275,8 @@ function describe(group: DupeCluster): string {
   ];
   if (group.connected) {
     parts.push('One of them calls another, so this may be deliberate delegation rather than duplication.');
+  } else if (isNamingFamily(group)) {
+    parts.push('Their names share most of their words, so these may be a deliberate set of variants rather than redundant re-implementations.');
   } else if (group.crossFile) {
     parts.push('They live in different files and none calls another, so each was likely written without knowledge of the others.');
   } else {

@@ -32,7 +32,14 @@ const STOPWORDS = new Set([
  * `ms`/`milliseconds` look like unrelated words, and near-identical functions
  * written by different sessions score far too low to surface.
  */
-const ABBREVIATIONS: Record<string, string> = {
+/**
+ * Null-prototype, deliberately. A plain object literal inherits from
+ * Object.prototype, so a lookup of a word like `constructor`, `toString` or
+ * `valueOf` returns an inherited function instead of undefined — which crashed
+ * concept naming on the first real codebase that had a symbol called
+ * `constructor`.
+ */
+const ABBREVIATIONS: Record<string, string> = Object.assign(Object.create(null), {
   ms: 'millisecond', msec: 'millisecond', millis: 'millisecond',
   sec: 'second', secs: 'second', s: 'second',
   min: 'minute', mins: 'minute',
@@ -48,7 +55,7 @@ const ABBREVIATIONS: Record<string, string> = {
   init: 'initialise', calc: 'calculate', conv: 'convert',
   fmt: 'format', len: 'length', idx: 'index', buf: 'buffer',
   dir: 'directory', pkg: 'package', dep: 'dependency', util: 'utility',
-};
+});
 
 const SHINGLE = 4;
 
