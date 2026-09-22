@@ -3,6 +3,9 @@ import { IntentStore } from './store.js';
 import { bold, dim, cyan, green, yellow } from '../util/term.js';
 import type { CodeSymbol } from '../types.js';
 
+const TEST_FILE =
+  /(^|\/)(tests?|spec|__tests__|test-d|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/i;
+
 const USAGE = `
 ${bold('instantiate intent')} — why each thing exists
 
@@ -14,7 +17,16 @@ ${bold('instantiate intent')} — why each thing exists
   ${bold('gaps')}                    load-bearing symbols with no record yet
 `;
 
-export function runIntentCommand(argv: string[], result: ScanResult, root: string): number {
+export interface IntentOptions {
+  limit?: number;
+}
+
+export function runIntentCommand(
+  argv: string[],
+  result: ScanResult,
+  root: string,
+  options: IntentOptions = {},
+): number {
   const store = new IntentStore(root);
   const [sub, ...rest] = argv;
 
@@ -73,8 +85,10 @@ export function runIntentCommand(argv: string[], result: ScanResult, root: strin
     }
 
     case 'draft': {
+      // `--limit` is stripped by the top-level parser before it reaches here,
+      // so read the parsed value and fall back to scanning the raw arguments.
       const limitFlag = rest.indexOf('--limit');
-      const limit = limitFlag === -1 ? 20 : Number(rest[limitFlag + 1]) || 20;
+      const limit = limitFlag === -1 ? (options.limit ?? 20) : Number(rest[limitFlag + 1]) || 20;
       const targets = loadBearing(result, limit).filter((s) => !store.get(s.symbol.id));
 
       for (const { symbol, callers } of targets) {
@@ -98,7 +112,7 @@ export function runIntentCommand(argv: string[], result: ScanResult, root: strin
     case 'gaps': {
       const gaps = loadBearing(result, 200).filter((s) => !store.get(s.symbol.id));
       console.log(`\n${bold(`${gaps.length} load-bearing symbols with no recorded intent`)}\n`);
-      for (const { symbol, callers } of gaps.slice(0, 25)) {
+      for (const { symbol, callers } of gaps.slice(0, options.limit ?? 25)) {
         console.log(`  ${bold(symbol.name.padEnd(30))} ${dim(`${symbol.file}:${symbol.line} · ${callers} callers`)}`);
       }
       console.log('');
@@ -136,7 +150,10 @@ function loadBearing(result: ScanResult, limit: number): Array<{ symbol: CodeSym
         s.callers > 0 &&
         s.symbol.kind !== 'module' &&
         // A one-liner carries no intent worth recording.
-        s.symbol.loc >= 4,
+        s.symbol.loc >= 4 &&
+        // A test helper has many callers and no intent anyone needs written
+        // down; it crowded out the library's own public surface.
+        !TEST_FILE.test(s.symbol.file),
     )
     .sort(
       (a, b) =>

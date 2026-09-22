@@ -71,6 +71,10 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
     if (symbol.name.startsWith('__') && symbol.name.endsWith('__')) continue;
     // A stub declares an interface; it has no implementation to duplicate.
     if (isStub(symbol)) continue;
+    // A test suite repeats its scaffolding on purpose: each case sets up the
+    // same shape and asserts something different. Verified precision on Python
+    // test suites was zero, so these are opt-in rather than default.
+    if (!config.includeTests && isTestFile(symbol.file)) continue;
     candidates.push({
       symbol,
       structure: structuralBag(symbol.body),
@@ -258,7 +262,9 @@ function cluster(
     const relevant = pairs.filter((p) => indices.includes(p.a) && indices.includes(p.b));
     const mean = relevant.reduce((sum, p) => sum + p.score, 0) / (relevant.length || 1);
 
-    // A wrapper that calls the thing it resembles is delegation, not duplication.
+    // A wrapper that calls the thing it resembles is delegation, not
+    // duplication — and so is an override beside the base it overrides, which
+    // the indexer links with the same kind of edge.
     const connected = members.some((m) =>
       members.some((n) => m !== n && (edgeSet.has(`${m.id}>${n.id}`) || edgeSet.has(`${n.id}>${m.id}`))),
     );
@@ -300,6 +306,13 @@ function comparableSize(a: CodeSymbol, b: CodeSymbol): boolean {
   const larger = Math.max(a.body.length, b.body.length);
   const smaller = Math.min(a.body.length, b.body.length);
   return smaller > 0 && larger / smaller <= MAX_SIZE_RATIO;
+}
+
+const TEST_FILE =
+  /(^|\/)(tests?|spec|__tests__|test-d|e2e)\/|(^|\/)(test_[^/]*|[^/]*_test|[^/]*\.(test|spec))\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/i;
+
+function isTestFile(file: string): boolean {
+  return TEST_FILE.test(file);
 }
 
 const NON_PRODUCTION =
@@ -360,6 +373,23 @@ function spansParallelSurfaces(members: CodeSymbol[], parallelDirs: Set<string>)
   return false;
 }
 
+/** How many callees every member of the group has in common. */
+function sharedCallees(members: CodeSymbol[], graph: CodeGraph): number {
+  const ids = new Set(members.map((m) => m.id));
+  const perMember = members.map((m) => {
+    const names = new Set<string>();
+    for (const edge of graph.edges) {
+      if (edge.from !== m.id || ids.has(edge.to)) continue;
+      const target = graph.symbols.get(edge.to);
+      if (target && target.kind !== 'module') names.add(target.name);
+    }
+    return names;
+  });
+  if (perMember.length === 0) return 0;
+  const [first, ...rest] = perMember;
+  return [...first].filter((name) => rest.every((set) => set.has(name))).length;
+}
+
 /**
  * Thin wrappers over one shared implementation: `head`, `options`, `delete`,
  * each a line that forwards to `request`.
@@ -369,10 +399,12 @@ function spansParallelSurfaces(members: CodeSymbol[], parallelDirs: Set<string>)
  */
 function isDelegating(members: CodeSymbol[], graph: CodeGraph): boolean {
   if (members.length < 2) return false;
-  // Only a thin wrapper qualifies, measured on the normalised body rather than
-  // on line count: a well-documented one-line forwarder runs to twenty lines of
-  // which nineteen are docstring.
-  if (members.some((m) => m.body.length > 240)) return false;
+  // A thin wrapper forwards to one function. A larger one that shares several
+  // callees with its siblings has already had its common parts extracted —
+  // execa's createReadable and createWritable both build on getSubprocessStdout
+  // and friends, and there is nothing left to merge.
+  const thin = members.every((m) => m.body.length <= 240);
+  if (!thin && sharedCallees(members, graph) < 2) return false;
 
   const ids = new Set(members.map((m) => m.id));
   // Match on the callee's *name*, not its identity: `api.head` forwards to
@@ -403,6 +435,13 @@ function isDelegating(members: CodeSymbol[], graph: CodeGraph): boolean {
  * user's trust, so this is treated as structure, not redundancy.
  */
 function isParallelSet(members: CodeSymbol[]): boolean {
+  // One name, implemented as a method by several classes, is polymorphism: each
+  // class must supply its own `convert` or `getQueryString`, and that is the
+  // design. Two free functions sharing a name is the opposite — nobody had to
+  // write the second one, and copy-paste is exactly how it happens.
+  const oneName = new Set(members.map((m) => m.name)).size === 1;
+  if (oneName && members.every((m) => m.kind === 'method')) return true;
+
   if (members.length < 3) return false;
 
   const names = new Map<string, number>();
@@ -436,7 +475,35 @@ function isParallelSet(members: CodeSymbol[]): boolean {
  * by someone who could not find the others.
  */
 function isNamingFamily(group: DupeCluster): boolean {
-  const wordSets = group.members.map((m) => new Set(splitIdentifier(m.name)));
+  const wordLists = group.members.map((m) => splitIdentifier(m.name));
+
+  // A designed set differs in exactly one place: `help_option` beside
+  // `version_option`, `useCallback` beside `useMemo`, `_find` beside
+  // `_find_no_duplicates`. The differing word is the whole point.
+  //
+  // A shared boundary word alone is not enough — `renderInvoiceTotal` and
+  // `formatReceiptTotal` also end alike, and are a genuine duplicate.
+  if (wordLists.length >= 2 && wordLists.every((w) => w.length > 0)) {
+    const distinct = new Set(group.members.map((m) => m.name)).size > 1;
+    const first = wordLists[0];
+    const sharedFirst = wordLists.every((w) => w[0] === first[0]);
+    const sharedLast = wordLists.every((w) => w.at(-1) === first.at(-1));
+
+    if (distinct && (sharedFirst || sharedLast)) {
+      // Strip the shared boundary; what is left must be a single word each.
+      const remainders = wordLists.map((w) => (sharedFirst ? w.slice(1) : w.slice(0, -1)));
+      if (remainders.every((r) => r.length <= 1)) return true;
+    }
+
+    // One name extends another: `_find` and `_find_no_duplicates`.
+    if (distinct) {
+      const sorted = wordLists.slice().sort((a, b) => a.length - b.length);
+      const shortest = sorted[0];
+      if (sorted.slice(1).every((w) => shortest.every((word, i) => w[i] === word))) return true;
+    }
+  }
+
+  const wordSets = wordLists.map((w) => new Set(w));
   for (let i = 0; i < wordSets.length; i++) {
     for (let j = i + 1; j < wordSets.length; j++) {
       const a = wordSets[i];

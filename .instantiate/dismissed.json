@@ -1,0 +1,10 @@
+{
+  "dismissed": [
+    {
+      "id": "drift:logging",
+      "reason": "The progress line in trend.ts needs a carriage return, which console.log cannot emit. Deliberate, and the only such place.",
+      "at": "2026-09-22"
+    }
+  ],
+  "fixed": []
+}

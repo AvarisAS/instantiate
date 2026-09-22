@@ -1,4 +1,11 @@
-import { buildHistory, readHistory, sparkline, summarise, isGitRepo } from '../analysis/history.js';
+import {
+  buildHistory,
+  readHistory,
+  sparkline,
+  summarise,
+  isGitRepo,
+  isShallow,
+} from '../analysis/history.js';
 import { bold, dim, cyan, green, red, yellow } from '../util/term.js';
 
 /**
@@ -8,6 +15,14 @@ import { bold, dim, cyan, green, red, yellow } from '../util/term.js';
 export async function runTrend(root: string, days: number, points: number, json: boolean): Promise<number> {
   if (!isGitRepo(root)) {
     console.error(`\n${yellow('!')} Not a git repository, so there is no history to walk.\n`);
+    return 1;
+  }
+
+  if (isShallow(root)) {
+    console.error(
+      `\n${yellow('!')} This is a shallow clone, so there is only one commit to measure.\n` +
+        `  Run ${cyan('git fetch --unshallow')} first — a trend drawn through one point is a straight line that means nothing.\n`,
+    );
     return 1;
   }
 

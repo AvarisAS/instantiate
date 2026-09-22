@@ -2,7 +2,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scan, loadDismissals, saveDismissals, applyDismissals } from './api.js';
-import { describeConfig } from './config.js';
+import { describeConfig, loadConfig, type Config } from './config.js';
 import { renderSummary, renderFindings } from './report/terminal.js';
 import { readBudget, writeBudget, checkBudget } from './analysis/budget.js';
 import { bold, dim, cyan, green, red, yellow } from './util/term.js';
@@ -22,6 +22,7 @@ ${bold('instantiate')} — see what is actually in your codebase
   ${bold('why')} <symbol>         where a symbol is declared, called and used
   ${bold('report')} [--out f]     write a standalone HTML report
   ${bold('serve')} [--port n]     live UI on localhost
+  ${bold('dismiss')} <id> <why>  hide a finding, with a reason, permanently
   ${bold('budget')}               record the current numbers as the baseline
   ${bold('check')}                fail if the numbers grew past the baseline
   ${bold('intent')} <cmd>         draft, confirm and read intent records
@@ -34,6 +35,7 @@ ${bold('instantiate')} — see what is actually in your codebase
   ${dim('--points <n>     samples across that window (default: 10)')}
   ${dim('--json           machine-readable output')}
   ${dim('--all            ignore dismissals')}
+  ${dim('--include-tests  look for duplicates inside test files too')}
 `;
 
 interface Args {
@@ -43,6 +45,7 @@ interface Args {
   limit?: number;
   json: boolean;
   all: boolean;
+  includeTests: boolean;
   out?: string;
   port: number;
   days: number;
@@ -56,6 +59,7 @@ function parseArgs(argv: string[]): Args {
     root: process.cwd(),
     json: false,
     all: false,
+    includeTests: false,
     port: 4321,
     days: 90,
     points: 10,
@@ -72,6 +76,7 @@ function parseArgs(argv: string[]): Args {
     else if (arg === '--points') args.points = Number(argv[++i]);
     else if (arg === '--json') args.json = true;
     else if (arg === '--all') args.all = true;
+    else if (arg === '--include-tests') args.includeTests = true;
     else if (arg === '--help' || arg === '-h') args.command = 'help';
     else rest.push(arg);
   }
@@ -79,6 +84,11 @@ function parseArgs(argv: string[]): Args {
   if (args.command !== 'help' && rest.length > 0) args.command = rest.shift()!;
   args.positional = rest;
   return args;
+}
+
+function loadConfigFor(args: Args): Config {
+  const config = loadConfig(args.root);
+  return args.includeTests ? { ...config, includeTests: true } : config;
 }
 
 function visible(findings: Finding[], args: Args): Finding[] {
@@ -105,12 +115,12 @@ async function main(): Promise<number> {
   }
 
   if (args.command === 'config') {
-    const { loadConfig } = await import('./config.js');
     console.log(describeConfig(loadConfig(args.root)));
     return 0;
   }
 
-  const result = await scan({ root: args.root });
+  const config = loadConfigFor(args);
+  const result = await scan({ root: args.root, config });
   const all = visible(result.findings, args);
   const limit = args.limit ?? result.config.maxFindings;
 
@@ -136,7 +146,10 @@ async function main(): Promise<number> {
           : args.command === 'conflicts'
             ? 'contradiction'
             : args.command;
-      const subset = all.filter((f) => f.kind === kind);
+      // An orphaned file is a dead-code finding; it is only reported at a
+      // different granularity.
+      const kinds = kind === 'dead' ? ['dead', 'orphan-file'] : [kind];
+      const subset = all.filter((f) => kinds.includes(f.kind));
       if (args.json) {
         console.log(JSON.stringify(subset, null, 2));
         return 0;
@@ -213,21 +226,27 @@ async function main(): Promise<number> {
     }
 
     case 'dismiss': {
-      const id = args.positional[0];
-      if (!id) {
-        console.error('Usage: instantiate dismiss <finding id>');
+      const [id, ...rest] = args.positional;
+      const reason = rest.join(' ');
+      if (!id || !reason) {
+        console.error('Usage: instantiate dismiss <finding id> <why it does not matter>');
+        console.error(
+          dim('  A reason is required. Without one, nobody reviewing the diff can tell a'),
+        );
+        console.error(dim('  considered decision from a finding somebody did not understand.'));
         return 1;
       }
       const store = loadDismissals(args.root);
-      store.dismissed.push(id);
+      store.dismissed.push({ id, reason, at: new Date().toISOString().slice(0, 10) });
       saveDismissals(args.root, store);
       console.log(`${green('✓')} dismissed — it will stay hidden across runs`);
+      console.log(dim('  Commit .instantiate/dismissed.json so the reason is reviewable.'));
       return 0;
     }
 
     case 'intent': {
       const { runIntentCommand } = await import('./intent/command.js');
-      return runIntentCommand(args.positional, result, args.root);
+      return runIntentCommand(args.positional, result, args.root, { limit: args.limit });
     }
 
     default:

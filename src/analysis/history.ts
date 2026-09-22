@@ -159,7 +159,19 @@ function sampleByCommitCount(root: string, points: number, seen: Set<string>): S
  * A detached worktree is the cheap way to get one without disturbing whatever
  * the user has in progress — nothing in their working tree is touched.
  */
+/** A `--depth 1` clone has exactly one commit, so there is no trend to draw. */
+export function isShallow(root: string): boolean {
+  try {
+    return git(root, ['rev-parse', '--is-shallow-repository']) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export async function buildHistory(root: string, options: HistoryOptions): Promise<HistoryPoint[]> {
+  if (!isGitRepo(root)) {
+    throw new UserError('Not a git repository, so there is no history to walk.');
+  }
   if (!isGitRepo(root)) {
     throw new UserError('Not a git repository, so there is no history to walk.');
   }

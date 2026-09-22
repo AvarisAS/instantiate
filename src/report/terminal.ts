@@ -55,6 +55,7 @@ export function renderSummary(stats: Stats, warnings: string[], shown = 0): stri
 /** What each analysis looked for, so an empty result is a result and not a shrug. */
 const LOOKED_FOR: Record<string, string> = {
   dead: 'Every symbol is reachable from an entrypoint.',
+  'orphan-file': 'No file is unreachable in its entirety.',
   duplicate: 'No two implementations of one idea were found.',
   contradiction:
     'Checked for one environment variable with two fallbacks, one declared ' +

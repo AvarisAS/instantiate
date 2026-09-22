@@ -14,6 +14,14 @@ export interface Config {
   satellites: string[];
   /** Python sources, indexed by the tree-sitter backend rather than by tsc. */
   python: string[];
+  /**
+   * Look for duplicates inside test files.
+   *
+   * Off by default: a test suite repeats its scaffolding on purpose, each case
+   * setting up the same shape and asserting something different. Measured
+   * precision on real Python test suites was zero.
+   */
+  includeTests: boolean;
   /** Cosine cut-off for the duplicate clusters. Calibrated per project on first scan. */
   dupeThreshold: number;
   /** Minimum lines before a symbol is a duplicate candidate. Kills trivial-adapter noise. */
@@ -50,6 +58,7 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi'> = {
   // templates. They are never indexed, yet what they import is very much alive.
   satellites: ['**/*.{mdx,md,vue,svelte,astro,html}'],
   python: ['**/*.py'],
+  includeTests: false,
   dupeThreshold: 0.72,
   dupeMinLoc: 4,
   maxFindings: 20,

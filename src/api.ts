@@ -150,8 +150,21 @@ function weight(finding: Finding): number {
   return finding.score * Math.log2(finding.loc + 2);
 }
 
+export interface Dismissal {
+  id: string;
+  /**
+   * Why this was judged not to matter.
+   *
+   * A dismissal without one is unreviewable: whoever reads the diff cannot tell
+   * a considered decision from someone silencing a finding they did not
+   * understand, and the record outlives everyone's memory of it.
+   */
+  reason: string;
+  at: string;
+}
+
 export interface DismissalStore {
-  dismissed: string[];
+  dismissed: Dismissal[];
   fixed: string[];
 }
 
@@ -159,7 +172,17 @@ export function loadDismissals(root: string): DismissalStore {
   const path = join(root, '.instantiate', 'dismissed.json');
   if (!existsSync(path)) return { dismissed: [], fixed: [] };
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as DismissalStore;
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as {
+      dismissed?: Array<string | Dismissal>;
+      fixed?: string[];
+    };
+    return {
+      // Tolerate the earlier shape, where a dismissal was just an id.
+      dismissed: (raw.dismissed ?? []).map((entry) =>
+        typeof entry === 'string' ? { id: entry, reason: '', at: '' } : entry,
+      ),
+      fixed: raw.fixed ?? [],
+    };
   } catch {
     return { dismissed: [], fixed: [] };
   }
@@ -167,15 +190,17 @@ export function loadDismissals(root: string): DismissalStore {
 
 export function saveDismissals(root: string, store: DismissalStore): void {
   mkdirSync(join(root, '.instantiate'), { recursive: true });
+  const byId = new Map(store.dismissed.map((d) => [d.id, d]));
+  const dismissed = [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
   writeFileSync(
     join(root, '.instantiate', 'dismissed.json'),
-    `${JSON.stringify({ dismissed: [...new Set(store.dismissed)].sort(), fixed: [...new Set(store.fixed)].sort() }, null, 2)}\n`,
+    `${JSON.stringify({ dismissed, fixed: [...new Set(store.fixed)].sort() }, null, 2)}\n`,
   );
 }
 
 /** Findings the human has already judged stay judged, across runs. */
 export function applyDismissals(findings: Finding[], store: DismissalStore): Finding[] {
-  const hidden = new Set([...store.dismissed, ...store.fixed]);
+  const hidden = new Set([...store.dismissed.map((d) => d.id), ...store.fixed]);
   return findings.filter((f) => !hidden.has(f.id));
 }
 

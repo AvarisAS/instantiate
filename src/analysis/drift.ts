@@ -151,7 +151,7 @@ export function findDrift(graph: CodeGraph): DriftResult {
       detail:
         `${breakdown}. ` +
         (dominantShare >= 0.8
-          ? `"${dominantName}" is the established convention here; ${minorityCount} place${minorityCount === 1 ? '' : 's'} deviate from it.`
+          ? `"${dominantName}" is the established convention here; ${minorityCount} ${minorityCount === 1 ? 'place deviates' : 'places deviate'} from it.`
           : `No convention has won, so each new change picks one at random.`),
       file: deviants[0]?.file ?? [...graph.files.keys()][0] ?? '',
       line: deviants[0]?.line ?? 1,

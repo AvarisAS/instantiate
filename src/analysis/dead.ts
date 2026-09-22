@@ -110,9 +110,40 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
   const findings: Finding[] = [];
   let deadLoc = 0;
 
+  // A file with nothing reachable in it is one decision — delete the file —
+  // not one row per symbol. zod's top twenty findings were two orphaned files
+  // between them, which pushed every independent finding out of view.
+  const orphanFiles = findOrphanFiles(graph, reachable);
+
+  for (const file of orphanFiles) {
+    const symbols = [...graph.symbols.values()].filter(
+      (s) => s.file === file && s.kind !== 'module',
+    );
+    const loc = graph.files.get(file)?.loc ?? symbols.reduce((sum, s) => sum + s.loc, 0);
+    deadLoc += loc;
+    findings.push({
+      id: `orphan-file:${file}`,
+      kind: 'orphan-file',
+      severity: 'high',
+      title: `Nothing in ${file} is reachable`,
+      detail:
+        `All ${symbols.length} symbol${symbols.length === 1 ? '' : 's'} in this file are unreachable, ` +
+        'and no file imports it. Deleting the file is one decision rather than one per symbol.',
+      file,
+      line: 1,
+      symbols: symbols.map((s) => s.id),
+      loc,
+      score: 0.9,
+      evidence: {
+        symbols: symbols.map((s) => ({ name: s.name, line: s.line, kind: s.kind, loc: s.loc })),
+      },
+    });
+  }
+
   for (const symbol of graph.symbols.values()) {
     if (reachable.has(symbol.id)) continue;
     if (symbol.kind === 'module') continue;
+    if (orphanFiles.has(symbol.file)) continue; // Reported as one file above.
 
     const score = confidence(symbol, dynamicNames);
     // Same rule as duplicates: the headline number, and therefore the CI budget,
@@ -140,6 +171,33 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
   // Biggest and most certain first: that is the order a human should delete in.
   findings.sort((a, b) => b.score * b.loc - a.score * a.loc);
   return { findings, reachable, deadLoc, noEntrypoints: false };
+}
+
+/**
+ * Files where nothing at all is reachable and nothing imports the file.
+ *
+ * Both conditions matter: a file whose exports are all unused but which is
+ * imported for its side effects is not an orphan, and a file nobody imports
+ * but whose symbols are reached some other way is not one either.
+ */
+function findOrphanFiles(graph: CodeGraph, reachable: Set<string>): Set<string> {
+  const importedFiles = new Set(
+    graph.edges
+      .filter((e) => e.kind === 'imports')
+      .map((e) => e.to.split('#')[0]),
+  );
+
+  const orphans = new Set<string>();
+  for (const file of graph.files.keys()) {
+    if (importedFiles.has(file)) continue;
+    const symbols = [...graph.symbols.values()].filter(
+      (s) => s.file === file && s.kind !== 'module',
+    );
+    // A file with one symbol is clearer reported as that symbol.
+    if (symbols.length < 2) continue;
+    if (symbols.every((s) => !reachable.has(s.id))) orphans.add(file);
+  }
+  return orphans;
 }
 
 /**
