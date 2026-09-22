@@ -1,6 +1,6 @@
-import type { CodeGraph, CodeSymbol } from '../types.js';
+import type { CodeGraph } from '../types.js';
 import { bold, dim, cyan, yellow, green } from '../util/term.js';
-import { IntentStore } from '../intent/store.js';
+import { lookup, uniqueCallers, type SymbolContext } from '../index/lookup.js';
 
 /**
  * Blast radius for one symbol: declared here, called from there, reaching that.
@@ -9,62 +9,61 @@ import { IntentStore } from '../intent/store.js';
  * wandering — you follow a node, get a fresh graph, and lose where you were.
  */
 export function renderWhy(graph: CodeGraph, query: string, root: string): string {
-  const matches = [...graph.symbols.values()].filter(
-    (s) => s.name === query || s.id === query || s.name.toLowerCase() === query.toLowerCase(),
-  );
+  const { contexts, suggestions } = lookup(graph, query, root);
 
-  if (matches.length === 0) {
-    const near = [...graph.symbols.values()]
-      .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
-      .slice(0, 8);
-    if (near.length === 0) return `\nNo symbol named ${bold(query)}.\n`;
-    return `\nNo exact match for ${bold(query)}. Did you mean:\n${near.map((s) => `  ${cyan(s.name)} ${dim(`${s.file}:${s.line}`)}`).join('\n')}\n`;
+  if (contexts.length === 0) {
+    if (suggestions.length === 0) return `\nNo symbol named ${bold(query)}.\n`;
+    const list = suggestions
+      .map((s) => `  ${cyan(s.name)} ${dim(`${s.file}:${s.line}`)}`)
+      .join('\n');
+    return `\nNo exact match for ${bold(query)}. Did you mean:\n${list}\n`;
   }
 
-  const intents = new IntentStore(root);
-  const out: string[] = [];
+  return contexts.map((context) => renderOne(context, graph)).join('\n');
+}
 
-  for (const symbol of matches) {
+function renderOne(context: SymbolContext, graph: CodeGraph): string {
+  const { symbol, intent } = context;
+  const out: string[] = [''];
+
+  out.push(`${bold(symbol.name)} ${dim(`· ${symbol.kind}${symbol.exported ? ' · exported' : ''}`)}`);
+  out.push(`${dim('declared')}  ${cyan(`${symbol.file}:${symbol.line}`)} ${dim(`(${symbol.loc} lines)`)}`);
+
+  if (intent) {
+    const badge = intent.status === 'confirmed' ? green('confirmed') : yellow('draft');
+    out.push(`${dim('intent')}    ${intent.purpose} ${dim(`[${badge}]`)}`);
+    if (intent.notFor) out.push(`${dim('not for')}   ${intent.notFor}`);
+  }
+
+  out.push('');
+  out.push(
+    section(
+      'called from',
+      uniqueCallers(context, graph).map((c) => ({ name: c.symbol.name, file: c.file, line: c.line })),
+    ),
+  );
+  out.push(
+    section(
+      'reaches',
+      context.reaches.map((s) => ({ name: s.name, file: s.file, line: s.line })),
+    ),
+  );
+
+  if (context.orphaned) {
+    out.push(`  ${yellow('!')} Nothing calls this and it is not exported. It is a deletion candidate.`);
     out.push('');
-    out.push(`${bold(symbol.name)} ${dim(`· ${symbol.kind}${symbol.exported ? ' · exported' : ''}`)}`);
-    out.push(`${dim('declared')}  ${cyan(`${symbol.file}:${symbol.line}`)} ${dim(`(${symbol.loc} lines)`)}`);
-
-    const intent = intents.get(symbol.id);
-    if (intent) {
-      const badge = intent.status === 'confirmed' ? green('confirmed') : yellow('draft');
-      out.push(`${dim('intent')}    ${intent.purpose} ${dim(`[${badge}]`)}`);
-      if (intent.notFor) out.push(`${dim('not for')}   ${intent.notFor}`);
-    }
-
-    const callers = graph.edges.filter((e) => e.to === symbol.id);
-    const callees = graph.edges.filter((e) => e.from === symbol.id);
-
-    out.push('');
-    out.push(section('called from', callers.map((e) => ({ id: e.from, file: e.file, line: e.line, kind: e.kind })), graph));
-    out.push(section('reaches', dedupe(callees.map((e) => ({ id: e.to, file: e.file, line: e.line, kind: e.kind }))), graph));
-
-    if (callers.length === 0 && !symbol.exported) {
-      out.push(`  ${yellow('!')} Nothing calls this and it is not exported. It is a deletion candidate.`);
-      out.push('');
-    }
   }
 
   return out.join('\n');
 }
 
 interface Ref {
-  id: string;
+  name: string;
   file: string;
   line: number;
-  kind: string;
 }
 
-function dedupe(refs: Ref[]): Ref[] {
-  const seen = new Set<string>();
-  return refs.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
-}
-
-function section(label: string, refs: Ref[], graph: CodeGraph): string {
+function section(label: string, refs: Ref[]): string {
   if (refs.length === 0) return `  ${dim(label.padEnd(12))} ${dim('nothing')}\n`;
 
   const lines = [`  ${bold(label)} ${dim(`(${refs.length})`)}`];
@@ -76,16 +75,9 @@ function section(label: string, refs: Ref[], graph: CodeGraph): string {
   }
 
   for (const [file, group] of [...grouped].slice(0, 12)) {
-    const names = dedupe(group)
-      .map((r) => shortName(graph.symbols.get(r.id), r.id))
-      .join(', ');
-    lines.push(`    ${cyan(`${file}:${group[0].line}`)} ${dim(names)}`);
+    lines.push(`    ${cyan(`${file}:${group[0].line}`)} ${dim(group.map((r) => r.name).join(', '))}`);
   }
   if (grouped.size > 12) lines.push(`    ${dim(`… and ${grouped.size - 12} more files`)}`);
 
   return `${lines.join('\n')}\n`;
-}
-
-function shortName(symbol: CodeSymbol | undefined, fallback: string): string {
-  return symbol ? symbol.name : fallback.split('#')[1] ?? fallback;
 }

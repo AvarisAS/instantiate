@@ -1,6 +1,8 @@
 node_modules
 dist
-.instantiate/*.db
-.instantiate/*.db-*
-.instantiate/cache
 *.log
+
+# Generated output. The budget and the intent records are committed on purpose:
+# one is the CI baseline, the other is the human contribution.
+.instantiate/report.html
+.instantiate/cache

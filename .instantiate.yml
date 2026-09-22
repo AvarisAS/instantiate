@@ -1,0 +1,22 @@
+# Most projects need none of this — everything here is autodetected.
+# Override only what the autodetection gets wrong.
+
+entrypoints:
+  - src/cli.ts
+  - test/**/*.test.ts
+
+publicApi:
+  - src/api.ts
+
+exclude:
+  # Deliberately messy code, used by the integration tests. Scanning it would
+  # report its planted duplicates as findings against this repo.
+  - test/fixtures/**
+
+# Genuine re-implementations of one idea score 0.81 and above; unrelated pairs
+# sit below 0.50. Raise this if duplicates are noisy, lower it to find more.
+dupeThreshold: 0.72
+
+# The noise budget. A first run that opens with 400 findings is a linter nobody
+# enables, so the top of the list has to be worth reading.
+maxFindings: 20
