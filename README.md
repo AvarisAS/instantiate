@@ -45,10 +45,11 @@ guessed. Invisible in any single file, obvious in aggregate.
 saying 4% dead is a fact nobody acts on; the same number rising for six weeks is
 an argument, and a falling one is the reason to keep going.
 
-**A file explorer** — the report carries a tree of the codebase. Open a file and
-you get its symbols, where each one is used (with the actual call sites), what
-it reaches, and any findings attached to it. Search matches files and symbols.
-This is the part people use; the map above it is an index into it.
+**The report is a code browser.** Three panes: a file tree where each row is
+shaded by what is wrong inside it, that file's symbols with a filter, and the
+whole source with the lines to act on shaded in place and the remedy stated
+above them. Click a call site to jump to it. The treemap is tucked behind a
+toggle, which is all an overview is for.
 
 ## What it does for coding agents
 

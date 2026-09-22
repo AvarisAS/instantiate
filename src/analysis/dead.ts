@@ -126,6 +126,7 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
       kind: 'orphan-file',
       severity: 'high',
       title: `Nothing in ${file} is reachable`,
+      action: `Delete ${file}. Nothing imports it and nothing in it is reached.`,
       detail:
         `All ${symbols.length} symbol${symbols.length === 1 ? '' : 's'} in this file are unreachable, ` +
         'and no file imports it. Deleting the file is one decision rather than one per symbol.',
@@ -155,6 +156,9 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
       severity: symbol.loc >= 40 ? 'high' : symbol.loc >= 10 ? 'medium' : 'low',
       title: `${symbol.name} is never reached`,
       detail: buildDetail(symbol, dynamicNames),
+      action: symbol.exported
+        ? `Delete ${symbol.name}, unless something outside this codebase imports it — check before removing an export.`
+        : `Delete ${symbol.name}. Nothing inside this codebase can reach it.`,
       file: symbol.file,
       line: symbol.line,
       symbols: [symbol.id],

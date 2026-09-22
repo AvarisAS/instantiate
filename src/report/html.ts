@@ -2,6 +2,8 @@ import { basename } from 'node:path';
 import type { ScanResult } from '../api.js';
 import type { Finding } from '../types.js';
 import { layout, treeFromPaths, type LaidOut } from './treemap.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { snippet, type Snippet } from './snippets.js';
 
 /**
@@ -68,11 +70,22 @@ interface SymbolEntry {
   findings: string[];
 }
 
+interface LineMark {
+  from: number;
+  to: number;
+  severity: string;
+  finding: string;
+}
+
 interface FileEntry {
   path: string;
   loc: number;
   symbols: SymbolEntry[];
   findings: string[];
+  /** The file's real source, for the code pane. Absent when too large to embed. */
+  source?: string[];
+  /** Line ranges implicated in a finding, for highlighting. */
+  marks: LineMark[];
 }
 
 interface SerialisedBox {
@@ -144,6 +157,17 @@ function buildData(result: ScanResult, findings: Finding[]): ReportData {
 const MAX_REFS = 25;
 
 /**
+ * Limits on embedded source.
+ *
+ * The code pane is the point of the page, so source ships with it rather than
+ * being fetched — a report is read offline. But a repository can be large, and
+ * a page nobody can open helps nobody, so very large files are skipped and,
+ * past a total budget, only files with something wrong with them keep theirs.
+ */
+const MAX_FILE_LINES = 5000;
+const SOURCE_BUDGET_BYTES = 9_000_000;
+
+/**
  * Every file, with its symbols and where each one is used.
  *
  * This is what the page is actually for. A map of a codebase answers "what is
@@ -209,14 +233,96 @@ function buildFileIndex(
     byFile.set(symbol.file, list);
   }
 
-  return [...perFile.entries()]
+  const entries: FileEntry[] = [...perFile.entries()]
     .map(([path, entry]) => ({
       path,
       loc: entry.loc,
       findings: entry.findings,
       symbols: (byFile.get(path) ?? []).sort((a, b) => a.line - b.line),
+      marks: [],
     }))
     .sort((a, b) => a.path.localeCompare(b.path));
+
+  attachMarks(entries, result);
+  attachSource(entries, result.config.root);
+  return entries;
+}
+
+/**
+ * Which lines a finding covers, so the code pane can colour them.
+ *
+ * A finding names symbols, and a symbol is a line range; that range is what a
+ * reader needs shaded, not a single line they then have to search around.
+ */
+function attachMarks(entries: FileEntry[], result: ScanResult): void {
+  const byPath = new Map(entries.map((e) => [e.path, e]));
+
+  for (const finding of result.findings) {
+    for (const id of finding.symbols) {
+      const symbol = result.graph.symbols.get(id);
+      const file = symbol ? byPath.get(symbol.file) : undefined;
+      if (symbol && file) {
+        file.marks.push({
+          from: symbol.line,
+          to: symbol.endLine,
+          severity: finding.severity,
+          finding: finding.id,
+        });
+        continue;
+      }
+      // A finding may point at module scope, where there is no symbol range.
+      const path = id.split('#')[0];
+      const fallback = byPath.get(path);
+      if (fallback) {
+        fallback.marks.push({
+          from: finding.line,
+          to: finding.line,
+          severity: finding.severity,
+          finding: finding.id,
+        });
+      }
+    }
+
+    // Drift and contradictions carry their own per-site locations.
+    const sites = [
+      ...((finding.evidence?.deviants ?? []) as Array<{ file: string; line: number }>),
+      ...((finding.evidence?.variants ?? []) as Array<{ file: string; line: number }>),
+    ];
+    for (const site of sites) {
+      const file = byPath.get(site.file);
+      if (file) {
+        file.marks.push({
+          from: site.line,
+          to: site.line,
+          severity: finding.severity,
+          finding: finding.id,
+        });
+      }
+    }
+  }
+}
+
+/** Read each file's real source, newest-severity-first within a size budget. */
+function attachSource(entries: FileEntry[], root: string): void {
+  // Files with findings get their source first: those are the ones a reader
+  // opens, and if the budget runs out it should run out on the clean ones.
+  const order = [...entries].sort((a, b) => b.findings.length - a.findings.length);
+  let spent = 0;
+
+  for (const entry of order) {
+    if (spent > SOURCE_BUDGET_BYTES) break;
+    let text: string;
+    try {
+      text = readFileSync(join(root, entry.path), 'utf8');
+    } catch {
+      continue;
+    }
+    if (text.length > 400_000) continue;
+    const lines = text.split('\n');
+    if (lines.length > MAX_FILE_LINES) continue;
+    entry.source = lines;
+    spent += text.length;
+  }
 }
 
 function flatten(node: LaidOut, out: SerialisedBox[]): void {
@@ -317,6 +423,9 @@ const STYLE = `
   --medium: #8a6410;
   --low: #6d737f;
   --good: #1f6b46;
+  --tint-high: color-mix(in srgb, var(--high) 9%, transparent);
+  --tint-medium: color-mix(in srgb, var(--medium) 10%, transparent);
+  --tint-low: color-mix(in srgb, var(--low) 7%, transparent);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --step--1: 0.78rem;
@@ -465,75 +574,115 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
           vertical-align: -1px; margin-right: 6px; border: 1px solid var(--line); }
 
-/* Explorer ---------------------------------------------------------------- */
-.explorer { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
-            background: var(--panel); }
-.ex-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
-          border-bottom: 1px solid var(--line); background: var(--sunk); }
+/* The three panes ---------------------------------------------------------
+ *
+ * Tree, symbols, source. Severity is carried by the row itself rather than by
+ * a bullet beside it, so a glance down the tree reads as a heat profile of the
+ * codebase; the source pane shades the exact lines to act on, in place.
+ */
+.ide { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+       background: var(--panel); }
+.ide-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
+           border-bottom: 1px solid var(--line); background: var(--sunk); }
 .ex-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
              padding: 7px 11px; border-radius: 7px; border: 1px solid var(--line-strong);
              background: var(--panel); color: var(--ink); }
 .ex-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ex-count { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
             flex: 0 0 auto; }
-.ex-panes { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; }
-.ex-tree { border-right: 1px solid var(--line); max-height: 560px; overflow: auto;
-           padding: 8px 0; background: var(--panel); }
-.ex-detail { max-height: 560px; overflow: auto; padding: 16px 18px; }
 
-.tree-dir { padding: 3px 10px 3px calc(10px + var(--depth) * 12px); color: var(--muted);
-            font-size: var(--step--1); font-weight: 650; letter-spacing: 0.01em; }
+.ide-panes { display: grid; grid-template-columns: minmax(180px, 240px) minmax(200px, 280px) 1fr;
+             height: 640px; }
+.ide-tree, .ide-symbols { border-right: 1px solid var(--line); display: flex;
+                          flex-direction: column; min-width: 0; }
+.ide-tree { overflow: auto; padding: 8px 0; }
+.ide-code { display: flex; flex-direction: column; min-width: 0; }
+.pane-scroll { overflow: auto; flex: 1 1 auto; padding: 8px; }
+.code-scroll { padding: 0; }
+.pane-empty { color: var(--muted); padding: 22px 14px; font-size: var(--step--1); }
+.pane-head { display: flex; gap: 8px; align-items: center; padding: 8px 10px;
+             border-bottom: 1px solid var(--line); background: var(--sunk); flex: 0 0 auto; }
+.pane-filter { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
+               padding: 5px 9px; border-radius: 6px; border: 1px solid var(--line-strong);
+               background: var(--panel); color: var(--ink); }
+.pane-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted);
+        border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 11px;
+        cursor: pointer; flex: 0 0 auto; }
+.chip.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+/* Tree: the row carries the colour. */
+.tree-dir { padding: 3px 10px 3px calc(10px + var(--depth) * 11px); color: var(--muted);
+            font-size: 11px; font-weight: 650; }
 .tree-file { display: flex; align-items: center; gap: 7px; width: 100%; border: 0;
-             background: none; font: inherit; font-size: var(--step--1); color: var(--ink-soft);
-             text-align: left; cursor: pointer;
-             padding: 3px 10px 3px calc(10px + var(--depth) * 12px); }
+             border-left: 3px solid transparent; background: none; font: inherit;
+             font-size: var(--step--1); color: var(--ink-soft); text-align: left; cursor: pointer;
+             padding: 3px 8px 3px calc(8px + var(--depth) * 11px); }
 .tree-file:hover { background: var(--accent-soft); }
-.tree-file.is-open { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tree-file.sev-high { border-left-color: var(--high); background: var(--tint-high); color: var(--ink); }
+.tree-file.sev-medium { border-left-color: var(--medium); background: var(--tint-medium); color: var(--ink); }
+.tree-file.sev-low { border-left-color: var(--low); background: var(--tint-low); }
+.tree-file.is-open { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 600; }
 .tree-file:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
 .tree-count { font-family: var(--mono); font-size: 10px; color: var(--muted);
               font-variant-numeric: tabular-nums; }
-.dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: transparent;
-       border: 1px solid var(--line-strong); }
-.dot.high { background: var(--high); border-color: var(--high); }
-.dot.medium { background: var(--medium); border-color: var(--medium); }
-.dot.low { background: var(--low); border-color: var(--low); }
 
-.detail-empty { color: var(--muted); padding: 30px 4px; }
-.detail-head h3 { margin: 0; font-size: var(--step-1); font-family: var(--mono);
-                  font-weight: 600; word-break: break-all; }
-.detail-head .sub { margin: 2px 0 14px; }
-.file-findings { display: grid; gap: 6px; margin-bottom: 16px; }
-
-.sym-list { display: grid; gap: 4px; }
-.sym { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-.sym.has-high { border-left: 3px solid var(--high); }
-.sym.has-medium { border-left: 3px solid var(--medium); }
-.sym.has-low { border-left: 3px solid var(--low); }
-.sym-head { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0;
-            background: none; font: inherit; text-align: left; cursor: pointer;
-            padding: 8px 11px; color: var(--ink); }
-.sym-head:hover { background: var(--accent-soft); }
-.sym-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.sym.is-open .sym-head { background: var(--accent-soft); }
-.sym-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-            color: var(--muted); flex: 0 0 62px; }
-.sym-name { font-family: var(--mono); font-size: var(--step--1); flex: 1 1 auto;
-            overflow: hidden; text-overflow: ellipsis; }
-.sym-meta { font-family: var(--mono); font-size: 10px; color: var(--muted);
-            font-variant-numeric: tabular-nums; flex: 0 0 auto; }
-.sym-uses { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
-            flex: 0 0 auto; }
+/* Symbols. */
+.sym { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
+       border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 6px;
+       background: none; font: inherit; cursor: pointer; padding: 5px 8px; color: var(--ink); }
+.sym:hover { background: var(--accent-soft); }
+.sym.is-open { border-color: var(--accent); background: var(--accent-soft); }
+.sym.has-high { border-left-color: var(--high); background: var(--tint-high); }
+.sym.has-medium { border-left-color: var(--medium); background: var(--tint-medium); }
+.sym.has-low { border-left-color: var(--low); background: var(--tint-low); }
+.sym:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sym-line { font-family: var(--mono); font-size: 10px; color: var(--muted);
+            font-variant-numeric: tabular-nums; flex: 0 0 34px; text-align: right; }
+.sym-main { flex: 1 1 auto; min-width: 0; display: grid; }
+.sym-name { font-family: var(--mono); font-size: var(--step--1); overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+.sym-sub { font-size: 10px; color: var(--muted); }
 .sym-uses.is-dead { color: var(--high); font-weight: 600; }
-.sym-uses.is-quiet { color: var(--muted); font-style: italic; }
-.sym-body { padding: 4px 11px 12px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
-.sym-findings { display: grid; gap: 5px; margin-top: 8px; }
-.sym-finding { display: flex; gap: 9px; align-items: center; width: 100%; border: 1px solid var(--line);
-               border-radius: 6px; background: var(--sunk); font: inherit;
-               font-size: var(--step--1); text-align: left; cursor: pointer; padding: 6px 9px;
-               color: var(--ink-soft); }
-.sym-finding:hover { border-color: var(--accent); color: var(--accent); }
+.sym-uses.is-quiet { font-style: italic; }
+.sym-flag { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+            border-radius: 4px; padding: 1px 6px; background: var(--sunk); flex: 0 0 auto; }
+.sym-flag.high { color: var(--high); } .sym-flag.medium { color: var(--medium); }
 
+/* Source, with the lines to act on shaded in place. */
+.code-head { justify-content: space-between; }
+.code-path { font-family: var(--mono); font-size: var(--step--1); overflow: hidden;
+             text-overflow: ellipsis; white-space: nowrap; }
+.code-meta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+             flex: 0 0 auto; }
+.code { font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
+.code-line { display: flex; gap: 12px; padding: 0 12px; border-left: 3px solid transparent;
+             white-space: pre; }
+.code-line.sev-high { background: var(--tint-high); border-left-color: var(--high); cursor: pointer; }
+.code-line.sev-medium { background: var(--tint-medium); border-left-color: var(--medium); cursor: pointer; }
+.code-line.sev-low { background: var(--tint-low); border-left-color: var(--low); cursor: pointer; }
+.code-line.is-focus { outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+                      outline-offset: -1px; }
+.code-n { color: var(--muted); opacity: 0.55; user-select: none; flex: 0 0 4ch;
+          text-align: right; font-variant-numeric: tabular-nums; }
+.code-text { flex: 1 1 auto; }
+
+/* What to do about it, above the code it concerns. */
+.action { border: 1px solid var(--line); border-left: 3px solid var(--low);
+          border-radius: 8px; margin: 10px; padding: 11px 13px; background: var(--panel); }
+.action.high { border-left-color: var(--high); }
+.action.medium { border-left-color: var(--medium); }
+.action-head { display: flex; gap: 10px; align-items: baseline; }
+.action-title { flex: 1 1 auto; font-weight: 550; }
+.action-score { font-family: var(--mono); font-size: 11px; color: var(--muted);
+                font-variant-numeric: tabular-nums; }
+.action-detail { color: var(--ink-soft); font-size: var(--step--1); margin: 8px 0 0;
+                 max-width: 74ch; }
+.action-do { margin: 8px 0 0; font-size: var(--step--1); padding: 8px 10px;
+             background: var(--accent-soft); border-radius: 6px; max-width: 74ch; }
+
+/* References. */
 .refs { display: grid; gap: 5px; }
 .refs-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
               color: var(--muted); font-weight: 650; }
@@ -547,10 +696,17 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
-@media (max-width: 700px) {
-  .ex-panes { grid-template-columns: 1fr; }
-  .ex-tree { border-right: 0; border-bottom: 1px solid var(--line); max-height: 220px; }
-  .ex-detail { max-height: none; }
+.map-block { margin-top: 40px; }
+.map-block summary { cursor: pointer; color: var(--muted); font-size: var(--step--1);
+                     padding: 6px 0; }
+.map-block summary:hover { color: var(--accent); }
+
+@media (max-width: 900px) {
+  .ide-panes { grid-template-columns: 1fr; height: auto; }
+  .ide-tree { border-right: 0; border-bottom: 1px solid var(--line); max-height: 200px; }
+  .ide-symbols { border-right: 0; border-bottom: 1px solid var(--line); max-height: 260px; }
+  .ide-code { max-height: 520px; }
+  .pane-scroll { max-height: 420px; }
 }
 footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line);
          color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
@@ -566,7 +722,6 @@ footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line);
 const SCRIPT = `
 const DATA = JSON.parse(document.getElementById('data').textContent);
 const app = document.getElementById('app');
-let filter = 'all';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -625,6 +780,8 @@ function treemap() {
 let openFile = null;
 let openSymbol = null;
 let query = '';
+let symbolFilter = '';
+let onlyFlagged = false;
 
 const FILES = new Map(DATA.files.map((f) => [f.path, f]));
 const FINDINGS = new Map(DATA.findings.map((f) => [f.id, f]));
@@ -685,9 +842,9 @@ function treeHtml(node, depth) {
     const severity = worstSeverity(file.findings);
     const selected = file.path === openFile ? ' is-open' : '';
     parts.push(
-      '<button class="tree-file' + selected + '" data-file="' + esc(file.path) + '" ' +
+      '<button class="tree-file' + selected + (severity ? ' sev-' + severity : '') +
+        '" data-file="' + esc(file.path) + '" ' +
         'style="--depth:' + depth + '" title="' + esc(file.path) + '">' +
-        (severity ? '<span class="dot ' + severity + '"></span>' : '<span class="dot"></span>') +
         '<span class="tree-name">' + esc(file.path.split('/').pop()) + '</span>' +
         (file.findings.length ? '<span class="tree-count">' + file.findings.length + '</span>' : '') +
       '</button>',
@@ -711,102 +868,138 @@ function symbolHtml(symbol) {
     return f && (f.kind === 'dead' || f.kind === 'orphan-file');
   });
   const uses = symbol.usedByCount > 0
-    ? { label: 'used ' + symbol.usedByCount + '×', tone: '' }
+    ? { label: String(symbol.usedByCount) + ' uses', tone: '' }
     : reportedDead
       ? { label: 'unused', tone: ' is-dead' }
-      : symbol.exported
-        ? { label: 'no callers here', tone: ' is-quiet' }
-        : { label: 'no callers', tone: ' is-quiet' };
+      : { label: symbol.exported ? 'no callers here' : 'no callers', tone: ' is-quiet' };
 
-  const refList = (label, refs, total) => {
-    if (total === 0) {
-      const why = label === 'used by' && symbol.exported
-        ? 'nothing inside this codebase — it is exported, so consumers may use it'
-        : 'nothing';
-      return '<div class="refs"><span class="refs-label">' + label + '</span>' +
-        '<span class="refs-none">' + why + '</span></div>';
-    }
-    const rows = refs.map((r) =>
-      '<button class="ref" data-file="' + esc(r.file) + '">' +
-        '<span class="ref-name">' + esc(r.name) + '</span>' +
-        '<span class="ref-loc">' + esc(r.file) + ':' + r.line + '</span>' +
-      '</button>').join('');
-    const more = total > refs.length ? '<span class="refs-none">and ' + (total - refs.length) + ' more</span>' : '';
-    return '<div class="refs"><span class="refs-label">' + label + ' (' + total + ')</span>' +
-      '<div class="ref-list">' + rows + more + '</div></div>';
-  };
-
-  const findingRows = symbol.findings.map((id) => {
-    const f = FINDINGS.get(id);
-    if (!f) return '';
-    return '<button class="sym-finding ' + f.severity + '" data-finding="' + esc(f.id) + '">' +
-      '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
-      '<span>' + esc(f.title) + '</span></button>';
-  }).join('');
-
-  return '<div class="sym' + (open ? ' is-open' : '') + (severity ? ' has-' + severity : '') + '" id="sym-' + esc(symbol.id) + '">' +
-    '<button class="sym-head" data-symbol="' + esc(symbol.id) + '">' +
-      '<span class="sym-kind">' + esc(symbol.kind) + '</span>' +
-      '<span class="sym-name">' + esc(symbol.name) + '</span>' +
-      '<span class="sym-meta">L' + symbol.line + ' · ' + symbol.loc + ' lines</span>' +
-      '<span class="sym-uses' + uses.tone + '" title="' +
-        (symbol.exported && symbol.usedByCount === 0 && !reportedDead
-          ? 'Exported, so it may be used outside this codebase'
-          : '') + '">' + uses.label + '</span>' +
-    '</button>' +
-    (open
-      ? '<div class="sym-body">' +
-          (findingRows ? '<div class="sym-findings">' + findingRows + '</div>' : '') +
-          refList('used by', symbol.usedBy, symbol.usedByCount) +
-          refList('reaches', symbol.reaches, symbol.reachesCount) +
-        '</div>'
-      : '') +
-  '</div>';
+  return '<button class="sym' + (open ? ' is-open' : '') + (severity ? ' has-' + severity : '') +
+      '" data-symbol="' + esc(symbol.id) + '">' +
+      '<span class="sym-line">' + symbol.line + '</span>' +
+      '<span class="sym-main">' +
+        '<span class="sym-name">' + esc(symbol.name) + '</span>' +
+        '<span class="sym-sub">' + esc(symbol.kind) + ' · ' + symbol.loc + ' lines · ' +
+          '<span class="sym-uses' + uses.tone + '">' + uses.label + '</span></span>' +
+      '</span>' +
+      (symbol.findings.length ? '<span class="sym-flag ' + severity + '">' + symbol.findings.length + '</span>' : '') +
+    '</button>';
 }
 
-function detailHtml() {
+/** Column two: what this file declares, filterable. */
+function symbolsPane() {
+  if (!openFile) return '<div class="pane-empty">Pick a file.</div>';
+  const file = FILES.get(openFile);
+  if (!file) return '<div class="pane-empty">File not found.</div>';
+
+  const q = symbolFilter.toLowerCase();
+  const shown = file.symbols.filter((s) => {
+    if (q && !s.name.toLowerCase().includes(q)) return false;
+    if (onlyFlagged && s.findings.length === 0) return false;
+    return true;
+  });
+
+  return '<div class="pane-head">' +
+      '<input class="pane-filter" id="sym-filter" type="search" placeholder="Filter symbols" ' +
+        'value="' + esc(symbolFilter) + '" autocomplete="off">' +
+      '<button class="chip' + (onlyFlagged ? ' is-on' : '') + '" data-toggle="flagged" ' +
+        'aria-pressed="' + onlyFlagged + '">flagged only</button>' +
+    '</div>' +
+    '<div class="pane-scroll">' +
+      (shown.length
+        ? shown.map(symbolHtml).join('')
+        : '<div class="pane-empty">' +
+            (file.symbols.length ? 'No symbol matches.' : 'This file declares nothing.') +
+          '</div>') +
+    '</div>';
+}
+
+/** Column three: the file, with the lines to act on shaded, and what to do. */
+function codePane() {
   if (!openFile) {
-    return '<div class="detail-empty"><p>Pick a file from the tree.</p>' +
-      '<p class="lede">' + DATA.files.length + ' files · ' +
-      DATA.files.reduce((n, f) => n + f.symbols.length, 0) + ' symbols indexed.</p></div>';
+    return '<div class="pane-empty">' +
+      '<p>Open a file to read it here, with anything worth acting on marked in place.</p></div>';
   }
   const file = FILES.get(openFile);
-  if (!file) return '<div class="detail-empty"><p>File not found.</p></div>';
+  if (!file) return '<div class="pane-empty">File not found.</div>';
 
-  const q = query.toLowerCase();
-  const symbols = query ? file.symbols.filter((s) => s.name.toLowerCase().includes(q)) : file.symbols;
+  const selected = openSymbol ? file.symbols.find((s) => s.id === openSymbol) : null;
+  const ids = selected && selected.findings.length ? selected.findings : file.findings;
+  const actions = ids.map((id) => FINDINGS.get(id)).filter(Boolean).map(actionCard).join('');
 
-  const fileFindings = file.findings.map((id) => FINDINGS.get(id)).filter(Boolean);
-  const banner = fileFindings.length
-    ? '<div class="file-findings">' + fileFindings.map((f) =>
-        '<button class="sym-finding ' + f.severity + '" data-finding="' + esc(f.id) + '">' +
-          '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
-          '<span>' + esc(f.title) + '</span></button>').join('') + '</div>'
-    : '';
+  const head = '<div class="pane-head code-head">' +
+      '<span class="code-path">' + esc(file.path) + '</span>' +
+      '<span class="code-meta">' + file.loc + ' lines</span>' +
+    '</div>';
 
-  return '<div class="detail-head">' +
-      '<h3>' + esc(file.path) + '</h3>' +
-      '<p class="sub">' + file.loc + ' lines · ' + file.symbols.length + ' symbols' +
-        (file.findings.length ? ' · ' + file.findings.length + ' finding' + (file.findings.length === 1 ? '' : 's') : ' · clean') +
-      '</p>' +
-    '</div>' +
-    banner +
-    (symbols.length
-      ? '<div class="sym-list">' + symbols.map(symbolHtml).join('') + '</div>'
-      : '<p class="lede">No symbols match "' + esc(query) + '" in this file.</p>');
+  if (!file.source) {
+    return head + '<div class="pane-scroll">' + (actions || '') +
+      '<div class="pane-empty">This file was too large to include in the report. ' +
+      'Open it in your editor at the lines above.</div></div>';
+  }
+
+  // Strongest severity wins a line, so an overlap never shades a problem down.
+  const rank = { high: 3, medium: 2, low: 1 };
+  const lineSeverity = new Map();
+  const lineFinding = new Map();
+  for (const mark of file.marks) {
+    for (let n = mark.from; n <= mark.to; n++) {
+      const current = lineSeverity.get(n);
+      if (!current || rank[mark.severity] > rank[current]) {
+        lineSeverity.set(n, mark.severity);
+        lineFinding.set(n, mark.finding);
+      }
+    }
+  }
+
+  const focusFrom = selected ? selected.line : null;
+  const focusTo = selected ? selected.line + selected.loc - 1 : null;
+
+  const rows = file.source.map((text, i) => {
+    const n = i + 1;
+    const severity = lineSeverity.get(n);
+    const inFocus = focusFrom !== null && n >= focusFrom && n <= focusTo;
+    const cls = 'code-line' + (severity ? ' sev-' + severity : '') + (inFocus ? ' is-focus' : '');
+    const anchor = inFocus && n === focusFrom ? ' id="focus-line"' : '';
+    return '<div class="' + cls + '"' + anchor +
+      (severity ? ' data-finding="' + esc(lineFinding.get(n)) + '"' : '') + '>' +
+      '<span class="code-n">' + n + '</span>' +
+      '<span class="code-text">' + esc(text || ' ') + '</span></div>';
+  }).join('');
+
+  return head + '<div class="pane-scroll code-scroll">' + actions +
+    '<div class="code">' + rows + '</div></div>';
+}
+
+/** One finding, stated as a problem and a remedy. */
+function actionCard(finding) {
+  return '<div class="action ' + finding.severity + '">' +
+      '<div class="action-head">' +
+        '<span class="sev ' + finding.severity + '">' + finding.severity + '</span>' +
+        '<span class="action-title">' + esc(finding.title) + '</span>' +
+        '<span class="action-score">' + Math.round(finding.score * 100) + '%</span>' +
+      '</div>' +
+      '<p class="action-detail">' + esc(finding.detail) + '</p>' +
+      (finding.action ? '<p class="action-do"><strong>Do:</strong> ' + esc(finding.action) + '</p>' : '') +
+      (finding.kind === 'drift' ? driftBars(finding) : '') +
+      (finding.kind === 'contradiction' ? conflictTable(finding) : '') +
+      (finding.kind === 'duplicate' && finding.snippets.length > 1
+        ? '<div class="snips side-by-side">' + finding.snippets.map(snippetHtml).join('') + '</div>'
+        : '') +
+    '</div>';
 }
 
 function explorer() {
   const files = matchingFiles();
-  return '<div class="explorer">' +
-      '<div class="ex-bar">' +
+  return '<div class="ide">' +
+      '<div class="ide-bar">' +
         '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
           'value="' + esc(query) + '" autocomplete="off">' +
         '<span class="ex-count">' + files.length + ' of ' + DATA.files.length + ' files</span>' +
       '</div>' +
-      '<div class="ex-panes">' +
-        '<nav class="ex-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
-        '<section class="ex-detail">' + detailHtml() + '</section>' +
+      '<div class="ide-panes">' +
+        '<nav class="ide-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
+        '<section class="ide-symbols" aria-label="Symbols">' + symbolsPane() + '</section>' +
+        '<section class="ide-code" aria-label="Source">' + codePane() + '</section>' +
       '</div>' +
     '</div>';
 }
@@ -814,14 +1007,21 @@ function explorer() {
 function repaintExplorer() {
   const host = document.getElementById('explorer-host');
   if (!host) return;
-  const focused = document.activeElement && document.activeElement.id === 'ex-search';
-  const caret = focused ? document.getElementById('ex-search').selectionStart : null;
+  const active = document.activeElement;
+  const focusedId = active && (active.id === 'ex-search' || active.id === 'sym-filter') ? active.id : null;
+  const caret = focusedId ? active.selectionStart : null;
+
   host.innerHTML = explorer();
-  if (focused) {
-    const input = document.getElementById('ex-search');
-    input.focus();
-    if (caret !== null) input.setSelectionRange(caret, caret);
+
+  if (focusedId) {
+    const input = document.getElementById(focusedId);
+    if (input) {
+      input.focus();
+      if (caret !== null) input.setSelectionRange(caret, caret);
+    }
   }
+  const focus = document.getElementById('focus-line');
+  if (focus) focus.scrollIntoView({ block: 'center' });
 }
 
 function snippetHtml(s) {
@@ -854,45 +1054,6 @@ function driftBars(f) {
     '</div>').join('') + '</div>';
 }
 
-function findingHtml(f) {
-  const sideBySide = (f.kind === 'duplicate' || f.kind === 'contradiction') && f.snippets.length > 1;
-  const unit = f.kind === 'contradiction' ? f.loc + ' sites' : f.loc + 'L';
-  return '<details class="finding" id="' + esc(f.id) + '" data-kind="' + f.kind +
-    '" data-severity="' + f.severity + '">' +
-    '<summary>' +
-      '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
-      '<span class="f-title">' + esc(f.title) + '</span>' +
-      '<span class="f-meta">' + unit + ' · ' + Math.round(f.score * 100) + '%</span>' +
-    '</summary>' +
-    '<div class="f-body">' +
-      '<p class="f-detail">' + esc(f.detail) + '</p>' +
-      (f.kind === 'drift' ? driftBars(f) : '') +
-      (f.kind === 'contradiction' ? conflictTable(f) : '') +
-      '<div class="snips' + (sideBySide ? ' side-by-side' : '') + '">' +
-        f.snippets.map(snippetHtml).join('') +
-      '</div>' +
-    '</div>' +
-  '</details>';
-}
-
-function findingsSection() {
-  const all = DATA.findings;
-  const list = filter === 'all' ? all : all.filter((f) => f.kind === filter);
-  const counts = { all: all.length };
-  for (const f of all) counts[f.kind] = (counts[f.kind] || 0) + 1;
-
-  const tabs = ['all', 'dead', 'duplicate', 'contradiction', 'drift']
-    .filter((k) => k === 'all' || counts[k])
-    .map((k) => '<button data-filter="' + k + '" aria-pressed="' + (filter === k) + '">' +
-      k + ' <span class="bar-num">' + (counts[k] || 0) + '</span></button>').join('');
-
-  return '<div class="filters">' + tabs + '</div>' +
-    '<p class="crumb" id="crumb"></p>' +
-    (list.length
-      ? list.map(findingHtml).join('')
-      : '<p class="lede">Nothing here. That is the good outcome.</p>');
-}
-
 /** A figure reads as good or bad before it is read as a number. */
 function tile(value, label, state) {
   const cls = state === 'clean' ? ' is-clean' : state === 'alert' ? ' is-alert' : '';
@@ -919,26 +1080,19 @@ function render() {
       tile(String(s.contradictionCount), 'values stated two ways', s.contradictionCount === 0 ? 'clean' : 'alert') +
     '</div>' +
 
-    '<h2>The map</h2>' +
-    '<p class="lede">Every file, sized by lines and shaded by how much of it is implicated ' +
-      'in a finding. Click a file to see what is wrong with it.</p>' +
-    '<div class="panel">' + treemap() + '</div>' +
-    '<p class="legend">' +
-      '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
-      '<span><span class="swatch" style="background:' + heatColour(0.5) + '"></span>some findings</span>' +
-      '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
-      '<span>box size = lines of code</span>' +
-    '</p>' +
-
-    '<h2>Browse the code</h2>' +
-    '<p class="lede">Pick a file to see what it declares, where each symbol is used, ' +
-      'and what is wrong with it. Search matches files and symbols.</p>' +
     '<div id="explorer-host">' + explorer() + '</div>' +
 
-    '<h2>What to do about it</h2>' +
-    '<p class="lede">Ranked by confidence times size: the top of this list is where deleting ' +
-      'or merging buys the most understanding for the least risk.</p>' +
-    '<div id="findings">' + findingsSection() + '</div>' +
+    '<details class="map-block"><summary>Show the whole codebase as a map</summary>' +
+      '<p class="lede">Every file, sized by lines and shaded by how much of it is ' +
+        'implicated in a finding. Click one to open it above.</p>' +
+      '<div class="panel">' + treemap() + '</div>' +
+      '<p class="legend">' +
+        '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
+        '<span><span class="swatch" style="background:' + heatColour(0.5) + '"></span>some findings</span>' +
+        '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
+        '<span>box size = lines of code</span>' +
+      '</p>' +
+    '</details>' +
 
     '<footer>Generated by <strong>instantiate</strong>. ' +
       'A static graph cannot see dynamic dispatch, so treat low-confidence findings as questions, ' +
@@ -946,6 +1100,11 @@ function render() {
 }
 
 app.addEventListener('input', (event) => {
+  if (event.target.id === 'sym-filter') {
+    symbolFilter = event.target.value.trim();
+    repaintExplorer();
+    return;
+  }
   if (event.target.id !== 'ex-search') return;
   query = event.target.value.trim();
   // Searching for a symbol should land on it, not merely narrow the tree.
@@ -957,12 +1116,23 @@ app.addEventListener('input', (event) => {
 });
 
 app.addEventListener('click', (event) => {
-  const fileButton = event.target.closest('[data-file]');
-  if (fileButton) {
-    openFile = fileButton.dataset.file;
-    openSymbol = null;
+  // A call site: open that file and land on the symbol it names.
+  const ref = event.target.closest('.ref[data-file]');
+  if (ref) {
+    openFile = ref.dataset.file;
+    const target = FILES.get(openFile);
+    const wanted = ref.dataset.symbol;
+    const match = target && wanted ? target.symbols.find((sym) => sym.name === wanted) : null;
+    openSymbol = match ? match.id : null;
+    symbolFilter = '';
     repaintExplorer();
-    document.querySelector('.ex-detail').scrollTop = 0;
+    return;
+  }
+
+  const toggle = event.target.closest('[data-toggle]');
+  if (toggle) {
+    onlyFlagged = !onlyFlagged;
+    repaintExplorer();
     return;
   }
 
@@ -973,53 +1143,36 @@ app.addEventListener('click', (event) => {
     return;
   }
 
-  const findingButton = event.target.closest('[data-finding]');
-  if (findingButton) {
-    // Jump to the full finding, with its code, further down the page.
-    filter = 'all';
-    document.getElementById('findings').innerHTML = findingsSection();
-    const target = document.getElementById(findingButton.dataset.finding);
-    if (target) {
-      target.open = true;
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // A shaded line in the source: select the symbol that finding belongs to.
+  const codeLine = event.target.closest('.code-line[data-finding]');
+  if (codeLine) {
+    const file = FILES.get(openFile);
+    const id = codeLine.dataset.finding;
+    const owner = file && file.symbols.find((sym) => sym.findings.includes(id));
+    if (owner) {
+      openSymbol = owner.id;
+      repaintExplorer();
     }
     return;
   }
 
-  const tab = event.target.closest('[data-filter]');
-  if (tab) {
-    filter = tab.dataset.filter;
-    document.getElementById('findings').innerHTML = findingsSection();
+  const fileButton = event.target.closest('[data-file]');
+  if (fileButton) {
+    openFile = fileButton.dataset.file;
+    openSymbol = null;
+    symbolFilter = '';
+    repaintExplorer();
     return;
   }
 
+  // The map is an index into the panes, not a destination of its own.
   const box = event.target.closest('[data-path]');
   if (box) {
-    // The map is an index into the explorer, not a destination of its own.
     openFile = box.dataset.path;
     openSymbol = null;
+    symbolFilter = '';
     repaintExplorer();
-    // Zoom, not lateral wander: a click always lands on the findings for that
-    // file, and the breadcrumb says where you are and how to get back.
-    const ids = DATA.fileFindings[box.dataset.path] || [];
-    const crumb = document.getElementById('crumb');
-    filter = 'all';
-    document.getElementById('findings').innerHTML = findingsSection();
-    const target = ids.map((id) => document.getElementById(id)).find(Boolean);
-    const c = document.getElementById('crumb');
-    if (target) {
-      target.open = true;
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      c.innerHTML = box.dataset.path + ' — ' + ids.length + ' finding' +
-        (ids.length === 1 ? '' : 's') + ' · <button data-clear>show everything</button>';
-    } else {
-      c.innerHTML = box.dataset.path + ' — clean · <button data-clear>show everything</button>';
-    }
-    return;
-  }
-
-  if (event.target.closest('[data-clear]')) {
-    document.getElementById('crumb').textContent = '';
+    document.getElementById('explorer-host').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 });
 

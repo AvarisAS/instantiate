@@ -117,6 +117,7 @@ interface DivergenceRule {
   score: number;
   title: (key: string, values: string[], sites: Site[]) => string;
   detail: (key: string, values: string[], sites: Site[]) => string;
+  action: (key: string, values: string[], sites: Site[]) => string;
   evidence?: (key: string, sites: Site[]) => Record<string, unknown>;
 }
 
@@ -152,6 +153,7 @@ function applyRule(graph: CodeGraph, rule: DivergenceRule): Finding[] {
       severity: rule.severity,
       title: rule.title(key, values, sites),
       detail: rule.detail(key, values, sites),
+      action: rule.action(key, values, sites),
       file: sites[0].file,
       line: sites[0].line,
       symbols: sites.map((s) => s.symbol?.id ?? `${s.file}#<module>`),
@@ -196,6 +198,8 @@ function divergentDefaults(graph: CodeGraph): Finding[] {
     detail: (_key, values) =>
       `${values.join(' and ')}. Whichever site runs first decides the behaviour, ` +
       'so the value this actually takes depends on import order rather than on a decision.',
+    action: (key) =>
+      `Decide what ${key} should default to, put that in one place, and have both sites read it.`,
   });
 }
 
@@ -232,6 +236,8 @@ function divergentConstants(graph: CodeGraph): Finding[] {
     detail: (_key, _values, sites) =>
       `${sites.length} sites across ${new Set(sites.map((s) => s.file)).size} files state a different ` +
       'number for the same thing. One of them is stale, or this value belongs in one place rather than several.',
+    action: (key) =>
+      `Work out which value is right for ${key.split('-').join(' ')}, declare it once, and import it everywhere else.`,
   });
 }
 
@@ -272,6 +278,8 @@ function divergentTimeSemantics(graph: CodeGraph): Finding[] {
       detail:
         'Each is correct on its own, and together they disagree by the machine\'s offset. ' +
         'Check whether any value written by one group is read by the other.',
+      action:
+        'Pick one — almost always UTC for anything stored or compared — and convert to local time only where something is displayed.',
       file: all[0].file,
       line: all[0].line,
       symbols: all.map((s) => s.symbol?.id ?? `${s.file}#<module>`),

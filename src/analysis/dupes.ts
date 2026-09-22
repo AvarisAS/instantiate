@@ -167,6 +167,9 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
       kind: 'duplicate',
       severity: removable >= 40 ? 'high' : removable >= 12 ? 'medium' : 'low',
       title: titleOf(group),
+      action: group.members.length === 2
+        ? `Keep one of these and have the other call it.`
+        : `Keep one implementation and have the other ${group.members.length - 1} call it.`,
       detail: describe(group),
       file: group.members[0].file,
       line: group.members[0].line,

@@ -148,6 +148,10 @@ export function findDrift(graph: CodeGraph): DriftResult {
       kind: 'drift',
       severity: dominantShare >= 0.8 ? 'medium' : 'high',
       title: `${category.label} is done ${uses.size} different ways`,
+      action:
+        dominantShare >= 0.8
+          ? `Change the ${minorityCount} deviating place${minorityCount === 1 ? '' : 's'} to use "${dominantName}", which is what the rest of the codebase does.`
+          : `Decide which of these this codebase uses, write it down, and convert the others.`,
       detail:
         `${breakdown}. ` +
         (dominantShare >= 0.8

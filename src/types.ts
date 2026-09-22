@@ -97,6 +97,13 @@ export interface Finding {
   loc: number;
   /** 0..1 confidence, drives ranking and the noise budget cut-off. */
   score: number;
+  /**
+   * What to do about it, in one imperative sentence.
+   *
+   * A finding that states a problem and stops leaves the reader to invent the
+   * remedy, which is the step most people skip.
+   */
+  action: string;
   /** Extra payload, shaped per finding kind, rendered by the report. */
   evidence?: Record<string, unknown>;
 }
