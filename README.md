@@ -45,8 +45,10 @@ guessed. Invisible in any single file, obvious in aggregate.
 saying 4% dead is a fact nobody acts on; the same number rising for six weeks is
 an argument, and a falling one is the reason to keep going.
 
-**Concepts** — the graph collapsed into a few dozen named groups. The only
-whole-codebase view that survives scale.
+**A file explorer** — the report carries a tree of the codebase. Open a file and
+you get its symbols, where each one is used (with the actual call sites), what
+it reaches, and any findings attached to it. Search matches files and symbols.
+This is the part people use; the map above it is an index into it.
 
 ## What it does for coding agents
 

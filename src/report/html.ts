@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import type { ScanResult } from '../api.js';
-import type { Finding, Concept } from '../types.js';
+import type { Finding } from '../types.js';
 import { layout, treeFromPaths, type LaidOut } from './treemap.js';
 import { snippet, type Snippet } from './snippets.js';
 
@@ -42,9 +42,37 @@ interface ReportData {
   stats: ScanResult['stats'];
   warnings: string[];
   treemap: SerialisedBox[];
-  concepts: Array<Concept & { x: number; y: number; r: number }>;
+  files: FileEntry[];
   findings: Array<Finding & { snippets: Snippet[] }>;
   fileFindings: Record<string, string[]>;
+}
+
+interface Ref {
+  file: string;
+  line: number;
+  name: string;
+}
+
+interface SymbolEntry {
+  id: string;
+  name: string;
+  kind: string;
+  line: number;
+  loc: number;
+  exported: boolean;
+  /** Where this is used, and what it reaches. Both capped; counts are exact. */
+  usedBy: Ref[];
+  usedByCount: number;
+  reaches: Ref[];
+  reachesCount: number;
+  findings: string[];
+}
+
+interface FileEntry {
+  path: string;
+  loc: number;
+  symbols: SymbolEntry[];
+  findings: string[];
 }
 
 interface SerialisedBox {
@@ -101,7 +129,7 @@ function buildData(result: ScanResult, findings: Finding[]): ReportData {
     stats: result.stats,
     warnings: result.warnings,
     treemap: boxes,
-    concepts: placeConcepts(result.concepts),
+    files: buildFileIndex(result, perFile),
     findings: findings.map((finding) => ({
       ...finding,
       snippets: snippetsFor(result, finding),
@@ -110,6 +138,85 @@ function buildData(result: ScanResult, findings: Finding[]): ReportData {
       [...perFile.entries()].filter(([, e]) => e.findings.length > 0).map(([path, e]) => [path, e.findings]),
     ),
   };
+}
+
+/** Cap on how many call sites travel with each symbol; the count stays exact. */
+const MAX_REFS = 25;
+
+/**
+ * Every file, with its symbols and where each one is used.
+ *
+ * This is what the page is actually for. A map of a codebase answers "what is
+ * in here"; a developer's question is almost always "where does this live, who
+ * calls it, and what is wrong with it" — which needs the tree, the symbol and
+ * its call sites in one place, not a picture.
+ */
+function buildFileIndex(
+  result: ScanResult,
+  perFile: Map<string, { loc: number; findings: string[]; weight: number }>,
+): FileEntry[] {
+  const incoming = new Map<string, Ref[]>();
+  const outgoing = new Map<string, Ref[]>();
+
+  for (const edge of result.graph.edges) {
+    const from = result.graph.symbols.get(edge.from);
+    const to = result.graph.symbols.get(edge.to);
+    if (!from || !to || from.id === to.id) continue;
+    // A module symbol stands for an import, which is not a call site.
+    if (from.kind === 'module') continue;
+
+    const callers = incoming.get(edge.to) ?? [];
+    if (!callers.some((r) => r.name === from.name && r.file === edge.file)) {
+      callers.push({ file: edge.file, line: edge.line, name: from.name });
+      incoming.set(edge.to, callers);
+    }
+    const callees = outgoing.get(edge.from) ?? [];
+    if (!callees.some((r) => r.name === to.name && r.file === to.file)) {
+      callees.push({ file: to.file, line: to.line, name: to.name });
+      outgoing.set(edge.from, callees);
+    }
+  }
+
+  const findingsBySymbol = new Map<string, string[]>();
+  for (const finding of result.findings) {
+    for (const id of finding.symbols) {
+      const list = findingsBySymbol.get(id) ?? [];
+      list.push(finding.id);
+      findingsBySymbol.set(id, list);
+    }
+  }
+
+  const byFile = new Map<string, SymbolEntry[]>();
+  for (const symbol of result.graph.symbols.values()) {
+    if (symbol.kind === 'module') continue;
+    const usedBy = incoming.get(symbol.id) ?? [];
+    const reaches = outgoing.get(symbol.id) ?? [];
+    const entry: SymbolEntry = {
+      id: symbol.id,
+      name: symbol.name,
+      kind: symbol.kind,
+      line: symbol.line,
+      loc: symbol.loc,
+      exported: symbol.exported,
+      usedBy: usedBy.slice(0, MAX_REFS),
+      usedByCount: usedBy.length,
+      reaches: reaches.slice(0, MAX_REFS),
+      reachesCount: reaches.length,
+      findings: findingsBySymbol.get(symbol.id) ?? [],
+    };
+    const list = byFile.get(symbol.file) ?? [];
+    list.push(entry);
+    byFile.set(symbol.file, list);
+  }
+
+  return [...perFile.entries()]
+    .map(([path, entry]) => ({
+      path,
+      loc: entry.loc,
+      findings: entry.findings,
+      symbols: (byFile.get(path) ?? []).sort((a, b) => a.line - b.line),
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function flatten(node: LaidOut, out: SerialisedBox[]): void {
@@ -133,33 +240,6 @@ function flatten(node: LaidOut, out: SerialisedBox[]): void {
 
 function round(n: number): number {
   return Math.round(n * 10) / 10;
-}
-
-/**
- * Lay the concepts out on a circle, largest first, alternating sides.
- *
- * Thirty bubbles is a drawable number, which is the only reason a node-link
- * picture is honest here at all. A force simulation would need a runtime library
- * and would move on every run; a deterministic ring means two scans of the same
- * code produce the same map, so a human can recognise it.
- */
-function placeConcepts(concepts: Concept[]): Array<Concept & { x: number; y: number; r: number }> {
-  const maxLoc = Math.max(...concepts.map((c) => c.loc), 1);
-  const count = concepts.length || 1;
-
-  return concepts.map((concept, i) => {
-    // Interleave so that big neighbours do not all crowd one arc.
-    const slot = i % 2 === 0 ? i / 2 : count - 1 - (i - 1) / 2;
-    const angle = (slot / count) * Math.PI * 2 - Math.PI / 2;
-    // Larger concepts sit nearer the middle: importance reads as centrality.
-    const radius = 210 - 70 * (concept.loc / maxLoc);
-    return {
-      ...concept,
-      x: round(320 + Math.cos(angle) * radius),
-      y: round(300 + Math.sin(angle) * radius * 0.82),
-      r: round(20 + 42 * Math.sqrt(concept.loc / maxLoc)),
-    };
-  });
 }
 
 function snippetsFor(result: ScanResult, finding: Finding): Snippet[] {
@@ -323,12 +403,6 @@ svg { display: block; width: 100%; height: auto; }
 .box-label { font-family: var(--mono); font-size: 9px; fill: var(--ink-soft);
              pointer-events: none; opacity: 0.8; }
 .dir-label { font-size: 10px; fill: var(--muted); pointer-events: none; font-weight: 650; }
-.concept { cursor: pointer; }
-.concept circle { fill: var(--accent); fill-opacity: 0.1; stroke: var(--accent); stroke-width: 1.5; }
-.concept:hover circle { fill-opacity: 0.26; }
-.concept text { font-size: 11px; fill: var(--ink); text-anchor: middle; pointer-events: none; }
-.concept .loc { font-size: 9px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-.edge { stroke: var(--muted); stroke-opacity: 0.28; fill: none; }
 
 /* Severity reads as a stripe before it reads as a word. */
 .finding { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--low);
@@ -390,6 +464,94 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
           font-size: var(--step--1); margin-top: 10px; flex-wrap: wrap; }
 .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
           vertical-align: -1px; margin-right: 6px; border: 1px solid var(--line); }
+
+/* Explorer ---------------------------------------------------------------- */
+.explorer { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+            background: var(--panel); }
+.ex-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
+          border-bottom: 1px solid var(--line); background: var(--sunk); }
+.ex-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
+             padding: 7px 11px; border-radius: 7px; border: 1px solid var(--line-strong);
+             background: var(--panel); color: var(--ink); }
+.ex-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ex-count { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
+            flex: 0 0 auto; }
+.ex-panes { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; }
+.ex-tree { border-right: 1px solid var(--line); max-height: 560px; overflow: auto;
+           padding: 8px 0; background: var(--panel); }
+.ex-detail { max-height: 560px; overflow: auto; padding: 16px 18px; }
+
+.tree-dir { padding: 3px 10px 3px calc(10px + var(--depth) * 12px); color: var(--muted);
+            font-size: var(--step--1); font-weight: 650; letter-spacing: 0.01em; }
+.tree-file { display: flex; align-items: center; gap: 7px; width: 100%; border: 0;
+             background: none; font: inherit; font-size: var(--step--1); color: var(--ink-soft);
+             text-align: left; cursor: pointer;
+             padding: 3px 10px 3px calc(10px + var(--depth) * 12px); }
+.tree-file:hover { background: var(--accent-soft); }
+.tree-file.is-open { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tree-file:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+.tree-count { font-family: var(--mono); font-size: 10px; color: var(--muted);
+              font-variant-numeric: tabular-nums; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: transparent;
+       border: 1px solid var(--line-strong); }
+.dot.high { background: var(--high); border-color: var(--high); }
+.dot.medium { background: var(--medium); border-color: var(--medium); }
+.dot.low { background: var(--low); border-color: var(--low); }
+
+.detail-empty { color: var(--muted); padding: 30px 4px; }
+.detail-head h3 { margin: 0; font-size: var(--step-1); font-family: var(--mono);
+                  font-weight: 600; word-break: break-all; }
+.detail-head .sub { margin: 2px 0 14px; }
+.file-findings { display: grid; gap: 6px; margin-bottom: 16px; }
+
+.sym-list { display: grid; gap: 4px; }
+.sym { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.sym.has-high { border-left: 3px solid var(--high); }
+.sym.has-medium { border-left: 3px solid var(--medium); }
+.sym.has-low { border-left: 3px solid var(--low); }
+.sym-head { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0;
+            background: none; font: inherit; text-align: left; cursor: pointer;
+            padding: 8px 11px; color: var(--ink); }
+.sym-head:hover { background: var(--accent-soft); }
+.sym-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sym.is-open .sym-head { background: var(--accent-soft); }
+.sym-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--muted); flex: 0 0 62px; }
+.sym-name { font-family: var(--mono); font-size: var(--step--1); flex: 1 1 auto;
+            overflow: hidden; text-overflow: ellipsis; }
+.sym-meta { font-family: var(--mono); font-size: 10px; color: var(--muted);
+            font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.sym-uses { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
+            flex: 0 0 auto; }
+.sym-uses.is-dead { color: var(--high); font-weight: 600; }
+.sym-uses.is-quiet { color: var(--muted); font-style: italic; }
+.sym-body { padding: 4px 11px 12px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.sym-findings { display: grid; gap: 5px; margin-top: 8px; }
+.sym-finding { display: flex; gap: 9px; align-items: center; width: 100%; border: 1px solid var(--line);
+               border-radius: 6px; background: var(--sunk); font: inherit;
+               font-size: var(--step--1); text-align: left; cursor: pointer; padding: 6px 9px;
+               color: var(--ink-soft); }
+.sym-finding:hover { border-color: var(--accent); color: var(--accent); }
+
+.refs { display: grid; gap: 5px; }
+.refs-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+              color: var(--muted); font-weight: 650; }
+.refs-none { color: var(--muted); font-size: var(--step--1); }
+.ref-list { display: grid; gap: 2px; }
+.ref { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0; background: none;
+       font: inherit; font-size: var(--step--1); text-align: left; cursor: pointer;
+       padding: 3px 6px; border-radius: 5px; color: var(--ink-soft); }
+.ref:hover { background: var(--accent-soft); color: var(--accent); }
+.ref-name { font-family: var(--mono); flex: 0 0 auto; }
+.ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+
+@media (max-width: 700px) {
+  .ex-panes { grid-template-columns: 1fr; }
+  .ex-tree { border-right: 0; border-bottom: 1px solid var(--line); max-height: 220px; }
+  .ex-detail { max-height: none; }
+}
 footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line);
          color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
@@ -451,31 +613,215 @@ function treemap() {
   return parts.join('');
 }
 
-function conceptMap() {
-  const cs = DATA.concepts;
-  if (cs.length < 2) return '<p class="lede">Too few symbols to cluster.</p>';
-  const byId = new Map(cs.map((c) => [c.id, c]));
-  const parts = ['<svg viewBox="0 0 640 600" role="img" aria-label="Concepts in this codebase and how they depend on each other">'];
 
-  const maxWeight = Math.max(1, ...cs.flatMap((c) => c.couples.map((k) => k.weight)));
-  for (const c of cs) {
-    for (const link of c.couples.slice(0, 3)) {
-      const t = byId.get(link.to);
-      if (!t) continue;
-      parts.push('<line class="edge" x1="' + c.x + '" y1="' + c.y + '" x2="' + t.x + '" y2="' + t.y +
-        '" stroke-width="' + (0.5 + (link.weight / maxWeight) * 3).toFixed(2) + '"/>');
+/* ---------------------------------------------------------------------------
+ * The explorer.
+ *
+ * A developer's question is almost never "what is this codebase made of". It
+ * is "where does this live, who calls it, and what is wrong with it" — which
+ * wants a tree, a symbol and its call sites in one place, not a picture.
+ * ------------------------------------------------------------------------ */
+
+let openFile = null;
+let openSymbol = null;
+let query = '';
+
+const FILES = new Map(DATA.files.map((f) => [f.path, f]));
+const FINDINGS = new Map(DATA.findings.map((f) => [f.id, f]));
+
+const worstSeverity = (ids) => {
+  let worst = null;
+  for (const id of ids) {
+    const f = FINDINGS.get(id);
+    if (!f) continue;
+    if (f.severity === 'high') return 'high';
+    if (f.severity === 'medium') worst = 'medium';
+    else if (!worst) worst = 'low';
+  }
+  return worst;
+};
+
+/** Files matching the search, by path or by any symbol name. */
+function matchingFiles() {
+  if (!query) return DATA.files;
+  const q = query.toLowerCase();
+  return DATA.files.filter(
+    (f) => f.path.toLowerCase().includes(q) || f.symbols.some((s) => s.name.toLowerCase().includes(q)),
+  );
+}
+
+/** Nest flat paths into folders, collapsing chains with a single child. */
+function buildTree(files) {
+  const root = { name: '', path: '', dirs: new Map(), files: [] };
+  for (const file of files) {
+    const parts = file.path.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const path = parts.slice(0, i + 1).join('/');
+      if (!node.dirs.has(path)) node.dirs.set(path, { name: parts[i], path, dirs: new Map(), files: [] });
+      node = node.dirs.get(path);
     }
+    node.files.push(file);
   }
+  return root;
+}
 
-  for (const c of cs) {
-    parts.push('<g class="concept" data-concept="' + c.id + '">' +
-      '<circle cx="' + c.x + '" cy="' + c.y + '" r="' + c.r + '"/>' +
-      '<text x="' + c.x + '" y="' + (c.y - 1) + '">' + esc(c.name) + '</text>' +
-      '<text class="loc" x="' + c.x + '" y="' + (c.y + 12) + '">' + c.loc + ' lines</text>' +
-      '<title>' + esc(c.name) + '\\n' + esc(c.description) + '</title></g>');
+function treeHtml(node, depth) {
+  const parts = [];
+  for (const dir of node.dirs.values()) {
+    // A folder with one folder inside reads better as one row: src/analysis.
+    let label = dir.name;
+    let current = dir;
+    while (current.files.length === 0 && current.dirs.size === 1) {
+      current = [...current.dirs.values()][0];
+      label += '/' + current.name;
+    }
+    parts.push(
+      '<div class="tree-dir" style="--depth:' + depth + '">' + esc(label) + '</div>' +
+        treeHtml(current, depth + 1),
+    );
   }
-  parts.push('</svg>');
+  for (const file of node.files.sort((a, b) => a.path.localeCompare(b.path))) {
+    const severity = worstSeverity(file.findings);
+    const selected = file.path === openFile ? ' is-open' : '';
+    parts.push(
+      '<button class="tree-file' + selected + '" data-file="' + esc(file.path) + '" ' +
+        'style="--depth:' + depth + '" title="' + esc(file.path) + '">' +
+        (severity ? '<span class="dot ' + severity + '"></span>' : '<span class="dot"></span>') +
+        '<span class="tree-name">' + esc(file.path.split('/').pop()) + '</span>' +
+        (file.findings.length ? '<span class="tree-count">' + file.findings.length + '</span>' : '') +
+      '</button>',
+    );
+  }
   return parts.join('');
+}
+
+function symbolHtml(symbol) {
+  const severity = worstSeverity(symbol.findings);
+  const open = symbol.id === openSymbol;
+
+  /*
+   * "Unused" is a verdict, and only the dead-code analysis gets to make it.
+   * A package's public API has no callers inside the package — that is what
+   * makes it the API — so marking "sign" and "verify" as unused would be
+   * alarming and wrong.
+   */
+  const reportedDead = symbol.findings.some((id) => {
+    const f = FINDINGS.get(id);
+    return f && (f.kind === 'dead' || f.kind === 'orphan-file');
+  });
+  const uses = symbol.usedByCount > 0
+    ? { label: 'used ' + symbol.usedByCount + '×', tone: '' }
+    : reportedDead
+      ? { label: 'unused', tone: ' is-dead' }
+      : symbol.exported
+        ? { label: 'no callers here', tone: ' is-quiet' }
+        : { label: 'no callers', tone: ' is-quiet' };
+
+  const refList = (label, refs, total) => {
+    if (total === 0) {
+      const why = label === 'used by' && symbol.exported
+        ? 'nothing inside this codebase — it is exported, so consumers may use it'
+        : 'nothing';
+      return '<div class="refs"><span class="refs-label">' + label + '</span>' +
+        '<span class="refs-none">' + why + '</span></div>';
+    }
+    const rows = refs.map((r) =>
+      '<button class="ref" data-file="' + esc(r.file) + '">' +
+        '<span class="ref-name">' + esc(r.name) + '</span>' +
+        '<span class="ref-loc">' + esc(r.file) + ':' + r.line + '</span>' +
+      '</button>').join('');
+    const more = total > refs.length ? '<span class="refs-none">and ' + (total - refs.length) + ' more</span>' : '';
+    return '<div class="refs"><span class="refs-label">' + label + ' (' + total + ')</span>' +
+      '<div class="ref-list">' + rows + more + '</div></div>';
+  };
+
+  const findingRows = symbol.findings.map((id) => {
+    const f = FINDINGS.get(id);
+    if (!f) return '';
+    return '<button class="sym-finding ' + f.severity + '" data-finding="' + esc(f.id) + '">' +
+      '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
+      '<span>' + esc(f.title) + '</span></button>';
+  }).join('');
+
+  return '<div class="sym' + (open ? ' is-open' : '') + (severity ? ' has-' + severity : '') + '" id="sym-' + esc(symbol.id) + '">' +
+    '<button class="sym-head" data-symbol="' + esc(symbol.id) + '">' +
+      '<span class="sym-kind">' + esc(symbol.kind) + '</span>' +
+      '<span class="sym-name">' + esc(symbol.name) + '</span>' +
+      '<span class="sym-meta">L' + symbol.line + ' · ' + symbol.loc + ' lines</span>' +
+      '<span class="sym-uses' + uses.tone + '" title="' +
+        (symbol.exported && symbol.usedByCount === 0 && !reportedDead
+          ? 'Exported, so it may be used outside this codebase'
+          : '') + '">' + uses.label + '</span>' +
+    '</button>' +
+    (open
+      ? '<div class="sym-body">' +
+          (findingRows ? '<div class="sym-findings">' + findingRows + '</div>' : '') +
+          refList('used by', symbol.usedBy, symbol.usedByCount) +
+          refList('reaches', symbol.reaches, symbol.reachesCount) +
+        '</div>'
+      : '') +
+  '</div>';
+}
+
+function detailHtml() {
+  if (!openFile) {
+    return '<div class="detail-empty"><p>Pick a file from the tree.</p>' +
+      '<p class="lede">' + DATA.files.length + ' files · ' +
+      DATA.files.reduce((n, f) => n + f.symbols.length, 0) + ' symbols indexed.</p></div>';
+  }
+  const file = FILES.get(openFile);
+  if (!file) return '<div class="detail-empty"><p>File not found.</p></div>';
+
+  const q = query.toLowerCase();
+  const symbols = query ? file.symbols.filter((s) => s.name.toLowerCase().includes(q)) : file.symbols;
+
+  const fileFindings = file.findings.map((id) => FINDINGS.get(id)).filter(Boolean);
+  const banner = fileFindings.length
+    ? '<div class="file-findings">' + fileFindings.map((f) =>
+        '<button class="sym-finding ' + f.severity + '" data-finding="' + esc(f.id) + '">' +
+          '<span class="sev ' + f.severity + '">' + f.severity + '</span>' +
+          '<span>' + esc(f.title) + '</span></button>').join('') + '</div>'
+    : '';
+
+  return '<div class="detail-head">' +
+      '<h3>' + esc(file.path) + '</h3>' +
+      '<p class="sub">' + file.loc + ' lines · ' + file.symbols.length + ' symbols' +
+        (file.findings.length ? ' · ' + file.findings.length + ' finding' + (file.findings.length === 1 ? '' : 's') : ' · clean') +
+      '</p>' +
+    '</div>' +
+    banner +
+    (symbols.length
+      ? '<div class="sym-list">' + symbols.map(symbolHtml).join('') + '</div>'
+      : '<p class="lede">No symbols match "' + esc(query) + '" in this file.</p>');
+}
+
+function explorer() {
+  const files = matchingFiles();
+  return '<div class="explorer">' +
+      '<div class="ex-bar">' +
+        '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
+          'value="' + esc(query) + '" autocomplete="off">' +
+        '<span class="ex-count">' + files.length + ' of ' + DATA.files.length + ' files</span>' +
+      '</div>' +
+      '<div class="ex-panes">' +
+        '<nav class="ex-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
+        '<section class="ex-detail">' + detailHtml() + '</section>' +
+      '</div>' +
+    '</div>';
+}
+
+function repaintExplorer() {
+  const host = document.getElementById('explorer-host');
+  if (!host) return;
+  const focused = document.activeElement && document.activeElement.id === 'ex-search';
+  const caret = focused ? document.getElementById('ex-search').selectionStart : null;
+  host.innerHTML = explorer();
+  if (focused) {
+    const input = document.getElementById('ex-search');
+    input.focus();
+    if (caret !== null) input.setSelectionRange(caret, caret);
+  }
 }
 
 function snippetHtml(s) {
@@ -584,10 +930,10 @@ function render() {
       '<span>box size = lines of code</span>' +
     '</p>' +
 
-    '<h2>What this codebase is made of</h2>' +
-    '<p class="lede">The graph collapsed into ' + DATA.concepts.length + ' groups, sized by lines, ' +
-      'linked where one depends on another. Larger groups sit nearer the centre.</p>' +
-    '<div class="panel">' + conceptMap() + '</div>' +
+    '<h2>Browse the code</h2>' +
+    '<p class="lede">Pick a file to see what it declares, where each symbol is used, ' +
+      'and what is wrong with it. Search matches files and symbols.</p>' +
+    '<div id="explorer-host">' + explorer() + '</div>' +
 
     '<h2>What to do about it</h2>' +
     '<p class="lede">Ranked by confidence times size: the top of this list is where deleting ' +
@@ -599,7 +945,47 @@ function render() {
       'not facts.</footer>';
 }
 
+app.addEventListener('input', (event) => {
+  if (event.target.id !== 'ex-search') return;
+  query = event.target.value.trim();
+  // Searching for a symbol should land on it, not merely narrow the tree.
+  if (query) {
+    const hit = matchingFiles();
+    if (hit.length === 1) openFile = hit[0].path;
+  }
+  repaintExplorer();
+});
+
 app.addEventListener('click', (event) => {
+  const fileButton = event.target.closest('[data-file]');
+  if (fileButton) {
+    openFile = fileButton.dataset.file;
+    openSymbol = null;
+    repaintExplorer();
+    document.querySelector('.ex-detail').scrollTop = 0;
+    return;
+  }
+
+  const symButton = event.target.closest('[data-symbol]');
+  if (symButton) {
+    openSymbol = openSymbol === symButton.dataset.symbol ? null : symButton.dataset.symbol;
+    repaintExplorer();
+    return;
+  }
+
+  const findingButton = event.target.closest('[data-finding]');
+  if (findingButton) {
+    // Jump to the full finding, with its code, further down the page.
+    filter = 'all';
+    document.getElementById('findings').innerHTML = findingsSection();
+    const target = document.getElementById(findingButton.dataset.finding);
+    if (target) {
+      target.open = true;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return;
+  }
+
   const tab = event.target.closest('[data-filter]');
   if (tab) {
     filter = tab.dataset.filter;
@@ -609,6 +995,10 @@ app.addEventListener('click', (event) => {
 
   const box = event.target.closest('[data-path]');
   if (box) {
+    // The map is an index into the explorer, not a destination of its own.
+    openFile = box.dataset.path;
+    openSymbol = null;
+    repaintExplorer();
     // Zoom, not lateral wander: a click always lands on the findings for that
     // file, and the breadcrumb says where you are and how to get back.
     const ids = DATA.fileFindings[box.dataset.path] || [];
@@ -624,17 +1014,6 @@ app.addEventListener('click', (event) => {
         (ids.length === 1 ? '' : 's') + ' · <button data-clear>show everything</button>';
     } else {
       c.innerHTML = box.dataset.path + ' — clean · <button data-clear>show everything</button>';
-    }
-    return;
-  }
-
-  const concept = event.target.closest('[data-concept]');
-  if (concept) {
-    const c = DATA.concepts[Number(concept.dataset.concept)];
-    if (c) {
-      document.getElementById('crumb').innerHTML = esc(c.name) + ' — ' + esc(c.description) +
-        ' · <button data-clear>show everything</button>';
-      document.getElementById('crumb').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     return;
   }
