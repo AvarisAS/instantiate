@@ -52,9 +52,21 @@ export function renderSummary(stats: Stats, warnings: string[], shown = 0): stri
   return lines.join('\n');
 }
 
-export function renderFindings(findings: Finding[], limit: number): string {
+/** What each analysis looked for, so an empty result is a result and not a shrug. */
+const LOOKED_FOR: Record<string, string> = {
+  dead: 'Every symbol is reachable from an entrypoint.',
+  duplicate: 'No two implementations of one idea were found.',
+  contradiction:
+    'Checked for one environment variable with two fallbacks, one declared ' +
+    'constant with different values across files, and dates read as UTC in one ' +
+    'place and local time in another. None of those disagree here.',
+  drift: 'Error handling, asynchrony, logging, exports and validation are each done one way.',
+};
+
+export function renderFindings(findings: Finding[], limit: number, kind?: string): string {
   if (findings.length === 0) {
-    return `\n${green('Nothing to do.')} No findings above the confidence cut-off.\n`;
+    const detail = kind ? LOOKED_FOR[kind] : undefined;
+    return `\n${green('Nothing to do.')} ${detail ?? 'No findings above the confidence cut-off.'}\n`;
   }
 
   const shown = findings.slice(0, limit);

@@ -141,7 +141,7 @@ async function main(): Promise<number> {
         console.log(JSON.stringify(subset, null, 2));
         return 0;
       }
-      console.log(renderFindings(subset, limit));
+      console.log(renderFindings(subset, limit, kind));
       return 0;
     }
 

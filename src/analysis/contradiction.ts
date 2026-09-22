@@ -74,11 +74,16 @@ function* sourceFiles(graph: CodeGraph): Generator<[string, string]> {
   }
 }
 
-/** Concepts whose value should be the same everywhere it is stated. */
+/**
+ * Concepts whose value should be the same everywhere it is stated.
+ *
+ * Matched against split identifier words, so entries here are single words:
+ * a list containing `maxage` could never match `maxAge`, which splits into
+ * `max` and `age`.
+ */
 const NUMERIC_CONCEPTS = [
-  'timeout', 'retry', 'retries', 'backoff', 'delay', 'interval', 'ttl',
-  'maxage', 'expiry', 'expires', 'limit', 'maxsize', 'maxlength', 'pagesize',
-  'batchsize', 'port', 'threshold', 'concurrency',
+  'timeout', 'retry', 'backoff', 'delay', 'interval', 'ttl',
+  'expiry', 'expire', 'limit', 'port', 'threshold', 'concurrency',
 ];
 
 export function findContradictions(graph: CodeGraph): ContradictionResult {
@@ -156,16 +161,26 @@ function divergentDefaults(graph: CodeGraph): Finding[] {
  */
 function divergentConstants(graph: CodeGraph): Finding[] {
   const byConcept = new Map<string, Site[]>();
-  // `timeout: 3000`, `const retryLimit = 5`, `maxAge = 86400`
-  const pattern = /\b([A-Za-z_$][\w$]*)\s*[:=]\s*(\d{2,})\b/g;
+  // Only a *declared* constant, never a property inside an options object.
+  //
+  // `maxAge: 1000` in one feature and `maxAge: 3600` in another are two
+  // features' settings, not a disagreement — matching those would have made
+  // this rule mostly false positives. `const DEFAULT_TIMEOUT = 3000` in one
+  // file against `30000` in another is the real failure mode: two places each
+  // deciding the same thing.
+  const pattern = /\b(?:const|let|var|final|static)?\s*([A-Za-z_$][\w$]*)\s*(?::\s*number\s*)?=\s*(\d{2,})\s*(?:;|$|\n)/gm;
 
   for (const [file, text] of sourceFiles(graph)) {
     let match: RegExpExecArray | null;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(text)) !== null) {
-      const words = splitIdentifier(match[1]);
-      const concept = words.find((w) => NUMERIC_CONCEPTS.includes(w));
-      if (!concept) continue;
+      const name = match[1];
+      const words = splitIdentifier(name);
+      // Either it names a concept that should hold one value, or it is a
+      // SCREAMING_SNAKE constant, which is a declared setting by convention.
+      const namesConcept = words.some((w) => NUMERIC_CONCEPTS.includes(w));
+      const isDeclaredConstant = /^[A-Z][A-Z0-9_]{2,}$/.test(name);
+      if (!namesConcept && !isDeclaredConstant) continue;
       // Key on the whole name, not just the concept word: `retryDelay` and
       // `retryLimit` are different facts that happen to share a word.
       const key = words.join('-');
