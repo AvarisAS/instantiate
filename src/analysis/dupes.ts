@@ -4,20 +4,75 @@ import { structuralBag, vocabularyBag, cosine, splitIdentifier, type Bag } from 
 
 interface Candidate {
   symbol: CodeSymbol;
+  /** The body with its signature removed. See bodyOf. */
+  body: string;
   structure: Bag;
   vocabulary: Bag;
+}
+
+/**
+ * The body, without the signature that introduces it.
+ *
+ * Measured against labelled examples, every high-scoring false positive was a
+ * pair whose *parameter lists* aligned while their bodies did different work —
+ * a 12-key destructuring matching another 12-key destructuring, a typed
+ * overload stub matching another stub. The signature says what a function
+ * takes; only the body says what it does, and duplication is about what it does.
+ */
+function bodyOf(symbol: CodeSymbol): string {
+  const text = symbol.body;
+  // TypeScript and JavaScript: everything after the opening brace.
+  const brace = text.indexOf('{');
+  const arrow = text.indexOf('=>');
+  if (brace !== -1 && (arrow === -1 || brace < arrow + 3)) return text.slice(brace + 1);
+  if (arrow !== -1) return text.slice(arrow + 2);
+  // Python: the colon ending the signature, which may follow a return
+  // annotation — `def f(x) -> Iterator[str]:` ends at the last colon, not the
+  // one straight after the parameters.
+  const close = text.indexOf(')');
+  if (close !== -1) {
+    const colon = text.indexOf(':', close);
+    if (colon !== -1) return text.slice(colon + 1);
+  }
+  return text;
+}
+
+/**
+ * A body that does nothing: an overload stub, or a definition whose whole
+ * content is its own documentation. Every such body resembles every other.
+ */
+function isTrivialBody(body: string): boolean {
+  const stripped = body.replace(/[\s{}();]/g, '');
+  return stripped.length < 24 || /^\.\.\.$/.test(stripped);
 }
 
 export interface DupeCluster {
   members: CodeSymbol[];
   /** Mean pairwise similarity inside the cluster. */
   similarity: number;
+  /**
+   * How much of the smaller body appears verbatim in the larger.
+   *
+   * The decisive signal. Two functions that share a parameter list can score
+   * well on everything else while doing different work; two that share their
+   * actual statements are the same function written twice, whatever they are
+   * called and wherever they live.
+   */
+  overlap: number;
   crossFile: boolean;
   connected: boolean;
   /** The same name implemented once per file: translations, adapters, drivers. */
   parallelSet: boolean;
   /** Thin wrappers that all delegate to one shared target. */
   delegating: boolean;
+  /**
+   * Members call at least one of the same things.
+   *
+   * Two functions doing the same job almost always reach for the same
+   * helpers. When two similar-looking bodies call nothing in common, the
+   * resemblance is in their shape rather than in their work.
+   */
+  sharesWork: boolean;
 }
 
 export interface DupeResult {
@@ -75,10 +130,17 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
     // same shape and asserts something different. Verified precision on Python
     // test suites was zero, so these are opt-in rather than default.
     if (!config.includeTests && isTestFile(symbol.file)) continue;
+    // Benchmarks and examples are written to be self-contained so each one
+    // measures or demonstrates a single thing; their resemblance is the point.
+    if (!config.includeTests && !isProductionCode(symbol.file)) continue;
+    const body = bodyOf(symbol);
+    // An overload stub or a docstring-only definition has nothing to duplicate.
+    if (isTrivialBody(body)) continue;
     candidates.push({
       symbol,
-      structure: structuralBag(symbol.body),
-      vocabulary: vocabularyBag(symbol.name, symbol.body),
+      body,
+      structure: structuralBag(body),
+      vocabulary: vocabularyBag(symbol.name, body),
     });
   }
 
@@ -159,6 +221,17 @@ function calibrate(candidates: Candidate[], config: Config): number {
   const p95 = samples[Math.floor(samples.length * 0.95)];
   // Sit above the background, but never below the configured floor.
   return Math.max(config.dupeThreshold, Math.min(0.95, p95 + 0.05));
+}
+
+/** Fraction of the smaller body's token shingles that also appear in the larger. */
+function bodyOverlap(a: Candidate, b: Candidate): number {
+  const [small, large] = a.structure.size <= b.structure.size ? [a, b] : [b, a];
+  if (small.structure.size === 0) return 0;
+  let shared = 0;
+  for (const key of small.structure.keys()) {
+    if (large.structure.has(key)) shared++;
+  }
+  return shared / small.structure.size;
 }
 
 function similarity(a: Candidate, b: Candidate): number {
@@ -261,6 +334,9 @@ function cluster(
     const members = indices.map((i) => candidates[i].symbol);
     const relevant = pairs.filter((p) => indices.includes(p.a) && indices.includes(p.b));
     const mean = relevant.reduce((sum, p) => sum + p.score, 0) / (relevant.length || 1);
+    const overlap = relevant.length
+      ? Math.max(...relevant.map((p) => bodyOverlap(candidates[p.a], candidates[p.b])))
+      : 0;
 
     // A wrapper that calls the thing it resembles is delegation, not
     // duplication — and so is an override beside the base it overrides, which
@@ -272,10 +348,12 @@ function cluster(
     out.push({
       members: members.sort((a, b) => b.loc - a.loc),
       similarity: mean,
+      overlap,
       crossFile: new Set(members.map((m) => m.file)).size > 1,
       connected,
       parallelSet: isParallelSet(members) || spansParallelSurfaces(members, parallelDirs),
       delegating: isDelegating(members, graph),
+      sharesWork: sharesWork(members, graph),
     });
   }
 
@@ -373,6 +451,28 @@ function spansParallelSurfaces(members: CodeSymbol[], parallelDirs: Set<string>)
   return false;
 }
 
+/**
+ * Do the members call anything in common, or merely look alike?
+ *
+ * Only meaningful when they call anything at all: a leaf function built from
+ * a regular expression and string methods reaches for nothing, and two such
+ * functions can still be the same function written twice.
+ */
+function sharesWork(members: CodeSymbol[], graph: CodeGraph): boolean {
+  if (members.length < 2) return true;
+  const ids = new Set(members.map((m) => m.id));
+  const callCounts = members.map(
+    (m) =>
+      graph.edges.filter((e) => {
+        if (e.from !== m.id || ids.has(e.to)) return false;
+        const target = graph.symbols.get(e.to);
+        return !!target && target.kind !== 'module';
+      }).length,
+  );
+  if (callCounts.some((count) => count === 0)) return true;
+  return sharedCallees(members, graph) > 0;
+}
+
 /** How many callees every member of the group has in common. */
 function sharedCallees(members: CodeSymbol[], graph: CodeGraph): number {
   const ids = new Set(members.map((m) => m.id));
@@ -399,12 +499,14 @@ function sharedCallees(members: CodeSymbol[], graph: CodeGraph): number {
  */
 function isDelegating(members: CodeSymbol[], graph: CodeGraph): boolean {
   if (members.length < 2) return false;
-  // A thin wrapper forwards to one function. A larger one that shares several
-  // callees with its siblings has already had its common parts extracted —
-  // execa's createReadable and createWritable both build on getSubprocessStdout
-  // and friends, and there is nothing left to merge.
-  const thin = members.every((m) => m.body.length <= 240);
-  if (!thin && sharedCallees(members, graph) < 2) return false;
+  // Only a thin wrapper, measured on the normalised body rather than on line
+  // count: a well-documented one-line forwarder runs to twenty lines of which
+  // nineteen are docstring.
+  //
+  // Two substantial functions that merely share helpers are not wrappers —
+  // hono's `jwk` and `jwt` middlewares share a verify helper and are still two
+  // forty-line bodies, one copied from the other.
+  if (members.some((m) => m.body.length > 240)) return false;
 
   const ids = new Set(members.map((m) => m.id));
   // Match on the callee's *name*, not its identity: `api.head` forwards to
@@ -483,23 +585,23 @@ function isNamingFamily(group: DupeCluster): boolean {
   //
   // A shared boundary word alone is not enough — `renderInvoiceTotal` and
   // `formatReceiptTotal` also end alike, and are a genuine duplicate.
-  if (wordLists.length >= 2 && wordLists.every((w) => w.length > 0)) {
-    const distinct = new Set(group.members.map((m) => m.name)).size > 1;
-    const first = wordLists[0];
-    const sharedFirst = wordLists.every((w) => w[0] === first[0]);
-    const sharedLast = wordLists.every((w) => w.at(-1) === first.at(-1));
+  // Checked pairwise: a cluster mixing `_maxSize`, `_minSize` and `_minLength`
+  // has no single shared boundary across every member, yet every pair in it is
+  // a variant of its neighbour.
+  for (let i = 0; i < wordLists.length; i++) {
+    for (let j = i + 1; j < wordLists.length; j++) {
+      const a = wordLists[i];
+      const b = wordLists[j];
+      if (a.length === 0 || b.length === 0) continue;
+      if (group.members[i].name === group.members[j].name) continue;
 
-    if (distinct && (sharedFirst || sharedLast)) {
-      // Strip the shared boundary; what is left must be a single word each.
-      const remainders = wordLists.map((w) => (sharedFirst ? w.slice(1) : w.slice(0, -1)));
-      if (remainders.every((r) => r.length <= 1)) return true;
-    }
+      // Differ in exactly one word at a shared boundary.
+      if (a[0] === b[0] && a.length <= 2 && b.length <= 2) return true;
+      if (a.at(-1) === b.at(-1) && a.length <= 2 && b.length <= 2) return true;
 
-    // One name extends another: `_find` and `_find_no_duplicates`.
-    if (distinct) {
-      const sorted = wordLists.slice().sort((a, b) => a.length - b.length);
-      const shortest = sorted[0];
-      if (sorted.slice(1).every((w) => shortest.every((word, i) => w[i] === word))) return true;
+      // One name extends the other: `_find` and `_find_no_duplicates`.
+      const [shortest, longest] = a.length <= b.length ? [a, b] : [b, a];
+      if (shortest.every((word, k) => longest[k] === word)) return true;
     }
   }
 
@@ -529,10 +631,13 @@ const ACTIONABLE_CLUSTER = 4;
 
 function rankScore(group: DupeCluster): number {
   let score = group.similarity;
+  const penaltiesBefore = score;
   // One implementation per file is structure, not redundancy.
   if (group.parallelSet) score -= 0.6;
   // Named doors onto one shared function: merging them deletes the API.
   if (group.delegating) score -= 0.5;
+  // Similar shape, nothing in common to do: the resemblance is superficial.
+  if (!group.sharesWork) score -= 0.3;
   // Benchmarks, fixtures and examples repeat themselves on purpose, to compare
   // variants. Real, and not work anyone is going to do.
   if (group.members.every((m) => !isProductionCode(m.file))) score -= 0.3;
@@ -545,9 +650,26 @@ function rankScore(group: DupeCluster): number {
   // One calls the other, so it is layering rather than redundancy.
   if (group.connected) score -= 0.4;
   // A designed set of variants, where the differing word is the whole point.
-  if (isNamingFamily(group)) score -= 0.35;
+  if (isNamingFamily(group)) score -= 0.45;
   // More copies is stronger evidence that nobody knew the others existed.
   if (group.members.length > 2) score += 0.05;
+
+  // A body reproduced almost verbatim is a duplicate however it is named and
+  // wherever it sits, so the reasons above cannot bury it.
+  //
+  // Except where verbatim bodies are the design rather than an accident:
+  //
+  //  - a designed pair, where the one differing word is exactly where the
+  //    behaviour differs. `setResponseHeader` and `appendResponseHeader` are
+  //    near-identical apart from a single `delete` call.
+  //  - a parallel set — sixty locale files, one adapter per backend, a class
+  //    per subtype — where identical structure is the entire point.
+  //  - a thin wrapper around a shared function.
+  const expectedToMatch = isNamingFamily(group) || group.parallelSet || group.delegating;
+  if (group.overlap >= 0.9 && !expectedToMatch) {
+    score = Math.max(score, penaltiesBefore - 0.2);
+  }
+
   return Math.max(0.05, Math.min(1, Math.round(score * 100) / 100));
 }
 
