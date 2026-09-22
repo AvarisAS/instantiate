@@ -37,9 +37,10 @@ export function buildGraph(config: Config): CodeGraph {
   }
 
   // Pass two: connect.
+  const byFileName = new Map(sourceFiles.map((sf) => [sf.fileName, sf]));
   for (const sf of sourceFiles) {
     const rel = relPath(config.root, sf.fileName);
-    collectEdges(sf, rel, sf, checker, declToId, symbols, edges, config);
+    collectEdges(sf, rel, sf, checker, declToId, symbols, edges, config, program, byFileName);
   }
 
   return {
@@ -270,8 +271,33 @@ function collectEdges(
   symbols: Map<string, CodeSymbol>,
   edges: Edge[],
   config: Config,
+  program: ts.Program,
+  byFileName: Map<string, ts.SourceFile>,
 ): void {
   const enclosing = enclosingSymbolId(node, declToId);
+
+  // `await import('./x')` is invisible to symbol resolution: the reference is a
+  // string. Without this, every lazily loaded module looks like dead code — the
+  // exact way a static graph lies about a codebase that is in fact fully alive.
+  if (
+    ts.isCallExpression(node) &&
+    (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+      (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
+    node.arguments.length > 0 &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    enclosing
+  ) {
+    const target = resolveModule(node.arguments[0].text, sf, program, byFileName);
+    if (target) {
+      const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      // We cannot tell which export is used, so every export of the module is
+      // reachable. Over-approximating here is correct: a false "alive" costs a
+      // missed finding, a false "dead" costs the user's trust in all of them.
+      for (const exported of exportsOf(target, checker, declToId)) {
+        edges.push({ from: enclosing, to: exported, kind: 'calls', file, line: pos.line + 1 });
+      }
+    }
+  }
 
   if (ts.isIdentifier(node) && enclosing) {
     // Skip the identifier that *is* the declaration's own name.
@@ -286,7 +312,14 @@ function collectEdges(
         ts.isMethodDeclaration(parent)) &&
       (parent as { name?: ts.Node }).name === node;
 
-    if (!isOwnName && !ts.isPropertyAccessExpression(parent && parent.parent ? parent : node)) {
+    // Both halves of `store.save()` matter: `store` references a declaration and
+    // `save` resolves to the method, which is the only way a class member ever
+    // gets a caller. Anything that resolves to nothing we index is dropped below,
+    // so letting the checker decide is cheaper than guessing syntactically.
+    const isPropertyName =
+      (ts.isPropertyAssignment(parent) && parent.name === node) || ts.isPropertySignature(parent);
+
+    if (!isOwnName && !isPropertyName) {
       const target = resolveToSymbolId(node, checker, declToId);
       if (target && target !== enclosing) {
         const isCall =
@@ -320,8 +353,65 @@ function collectEdges(
   }
 
   ts.forEachChild(node, (child) =>
-    collectEdges(child, file, sf, checker, declToId, symbols, edges, config),
+    collectEdges(child, file, sf, checker, declToId, symbols, edges, config, program, byFileName),
   );
+}
+
+/** Resolve a module specifier to an indexed source file, if it is one of ours. */
+function resolveModule(
+  specifier: string,
+  from: ts.SourceFile,
+  program: ts.Program,
+  byFileName: Map<string, ts.SourceFile>,
+): ts.SourceFile | undefined {
+  const resolved = ts.resolveModuleName(
+    specifier,
+    from.fileName,
+    program.getCompilerOptions(),
+    ts.sys,
+  ).resolvedModule;
+  if (resolved) {
+    const hit = byFileName.get(resolved.resolvedFileName);
+    if (hit) return hit;
+  }
+  // Resolution fails for `./x.js` pointing at `x.ts` under some configurations,
+  // so fall back to matching the path we would have written on disk.
+  if (specifier.startsWith('.')) {
+    const base = join(dirname(from.fileName), specifier).replace(/\.(js|mjs|cjs)$/, '');
+    for (const extension of ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js']) {
+      const hit = byFileName.get(base + extension);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+function exportsOf(
+  sf: ts.SourceFile,
+  checker: ts.TypeChecker,
+  declToId: Map<ts.Node, string>,
+): string[] {
+  const moduleSymbol = checker.getSymbolAtLocation(sf);
+  if (!moduleSymbol) return [];
+  const ids: string[] = [];
+  for (const exported of checker.getExportsOfModule(moduleSymbol)) {
+    let resolved = exported;
+    if (resolved.flags & ts.SymbolFlags.Alias) {
+      try {
+        resolved = checker.getAliasedSymbol(resolved);
+      } catch {
+        continue;
+      }
+    }
+    for (const decl of resolved.declarations ?? []) {
+      const id = declToId.get(decl) ?? (decl.parent ? declToId.get(decl.parent) : undefined);
+      if (id) {
+        ids.push(id);
+        break;
+      }
+    }
+  }
+  return ids;
 }
 
 /** Walk up to the nearest recorded declaration: the symbol this node lives inside. */
