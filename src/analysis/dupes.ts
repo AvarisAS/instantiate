@@ -452,6 +452,33 @@ function spansParallelSurfaces(members: CodeSymbol[], parallelDirs: Set<string>)
 }
 
 /**
+ * What each member calls, by name, ignoring calls between members themselves.
+ *
+ * By name rather than by identity: `api.head` forwards to `api.request` while
+ * `Session.head` forwards to `Session.request`, and those are two symbols and
+ * one idea.
+ */
+function calleeNames(members: CodeSymbol[], graph: CodeGraph): Array<Set<string>> {
+  const ids = new Set(members.map((m) => m.id));
+  return members.map((member) => {
+    const names = new Set<string>();
+    for (const edge of graph.edges) {
+      if (edge.from !== member.id || ids.has(edge.to)) continue;
+      const target = graph.symbols.get(edge.to);
+      if (target && target.kind !== 'module') names.add(target.name);
+    }
+    return names;
+  });
+}
+
+/** Names every member calls. */
+function commonCallees(perMember: Array<Set<string>>): string[] {
+  if (perMember.length === 0) return [];
+  const [first, ...rest] = perMember;
+  return [...first].filter((name) => rest.every((set) => set.has(name)));
+}
+
+/**
  * Do the members call anything in common, or merely look alike?
  *
  * Only meaningful when they call anything at all: a leaf function built from
@@ -460,34 +487,9 @@ function spansParallelSurfaces(members: CodeSymbol[], parallelDirs: Set<string>)
  */
 function sharesWork(members: CodeSymbol[], graph: CodeGraph): boolean {
   if (members.length < 2) return true;
-  const ids = new Set(members.map((m) => m.id));
-  const callCounts = members.map(
-    (m) =>
-      graph.edges.filter((e) => {
-        if (e.from !== m.id || ids.has(e.to)) return false;
-        const target = graph.symbols.get(e.to);
-        return !!target && target.kind !== 'module';
-      }).length,
-  );
-  if (callCounts.some((count) => count === 0)) return true;
-  return sharedCallees(members, graph) > 0;
-}
-
-/** How many callees every member of the group has in common. */
-function sharedCallees(members: CodeSymbol[], graph: CodeGraph): number {
-  const ids = new Set(members.map((m) => m.id));
-  const perMember = members.map((m) => {
-    const names = new Set<string>();
-    for (const edge of graph.edges) {
-      if (edge.from !== m.id || ids.has(edge.to)) continue;
-      const target = graph.symbols.get(edge.to);
-      if (target && target.kind !== 'module') names.add(target.name);
-    }
-    return names;
-  });
-  if (perMember.length === 0) return 0;
-  const [first, ...rest] = perMember;
-  return [...first].filter((name) => rest.every((set) => set.has(name))).length;
+  const perMember = calleeNames(members, graph);
+  if (perMember.some((names) => names.size === 0)) return true;
+  return commonCallees(perMember).length > 0;
 }
 
 /**
@@ -508,23 +510,9 @@ function isDelegating(members: CodeSymbol[], graph: CodeGraph): boolean {
   // forty-line bodies, one copied from the other.
   if (members.some((m) => m.body.length > 240)) return false;
 
-  const ids = new Set(members.map((m) => m.id));
-  // Match on the callee's *name*, not its identity: `api.head` forwards to
-  // `api.request` while `Session.head` forwards to `Session.request`. Those are
-  // two symbols and one idea, and requiring identity missed the whole family.
-  const targets = members.map((m) => {
-    const names = new Set<string>();
-    for (const edge of graph.edges) {
-      if (edge.from !== m.id || ids.has(edge.to)) continue;
-      const target = graph.symbols.get(edge.to);
-      if (target && target.kind !== 'module') names.add(target.name);
-    }
-    return names;
-  });
-  if (targets.some((t) => t.size === 0)) return false;
-
-  const [first, ...rest] = targets;
-  return [...first].some((candidate) => rest.every((t) => t.has(candidate)));
+  const perMember = calleeNames(members, graph);
+  if (perMember.some((names) => names.size === 0)) return false;
+  return commonCallees(perMember).length > 0;
 }
 
 /**

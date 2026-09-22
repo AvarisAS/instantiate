@@ -198,6 +198,12 @@ Duplicate detection knows the difference between redundancy and design:
 - **Duplicates need shared vocabulary.** Two functions with identical structure
   and every noun renamed score too low to report, because nothing short of
   semantic embeddings separates that from a coincidental shape match.
+- **Duplicate precision is 0.75 against hand-labelled pairs**, with recall 0.86
+  — measured, not asserted: `npm run calibrate` re-runs it. The confidence score
+  is calibrated so the bands descend (0.80 above 0.70, 0.67 in the middle, 0.17
+  below), which is what makes ranking worth reading. It is a similarity
+  detector, not a semantic one, and two functions that share a parameter list
+  while doing different work can still slip through.
 - **Contradictions are narrow on purpose.** An environment variable with two
   fallbacks, a declared constant with two values, UTC against local time. A
   `maxAge` of 600 in one feature and 3600 in another is two settings, not a
