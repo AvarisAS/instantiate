@@ -140,9 +140,11 @@ Add `--json` to anything.
 
 ## What it understands
 
-Validated against real repositories, because a tool like this is only as good as
-its false-positive rate. Each of these is a pattern that produced a wrong answer
-on a real codebase and is now covered by a regression test:
+Validated against real repositories — hono, zod, ky, zustand, ofetch, chalk and
+requests — because a tool like this is only as good as its false-positive rate.
+Two rounds of adversarial checking put dead-code precision at 0% before these
+were fixed. Each is a pattern that produced a wrong answer on real code and is
+now covered by a regression test:
 
 - code at module scope, which has no enclosing function
 - barrels — `export { x } from`, and `export *`, which names nothing
@@ -155,6 +157,23 @@ on a real codebase and is now covered by a regression test:
 - monorepo workspaces, and framework route conventions inside them
 - scripts, benchmarks and examples, which are run rather than imported
 - vendored code, whose unused exports are somebody else's contract
+- constructors, which `new Foo()` never names, and abstract members, which have
+  no body to record
+- overrides, since a call through a base method runs the subclass's version
+- `declare module` augmentations, which merge into a type declared elsewhere
+- path aliases (`@/components/x`) from whichever tsconfig governs the file
+- modules that run code at load and that nothing imports, which are scripts
+
+Duplicate detection knows the difference between redundancy and design:
+
+- a closure and the function whose text contains it
+- stubs, which all resemble each other and implement nothing
+- pairs of wildly different size, where neither could replace the other
+- named doors onto one function — `head`, `options`, `delete`
+- one name per class, which is polymorphism
+- directories that mirror each other, learned from shared symbol names: two
+  published API surfaces over one idea are a design, not a repetition
+- translations, adapters and drivers — one name implemented once per file
 
 ## Honest limits
 
@@ -170,6 +189,13 @@ on a real codebase and is now covered by a regression test:
 - **Parallel sets are demoted, not understood.** Sixty translations are
   recognised as structure rather than redundancy by their shape — one name per
   file — not because the tool knows what a translation is.
+- **Duplicates need shared vocabulary.** Two functions with identical structure
+  and every noun renamed score too low to report, because nothing short of
+  semantic embeddings separates that from a coincidental shape match.
+- **Contradictions are narrow on purpose.** An environment variable with two
+  fallbacks, a declared constant with two values, UTC against local time. A
+  `maxAge` of 600 in one feature and 3600 in another is two settings, not a
+  disagreement, and reporting it would make the whole category untrustworthy.
 - **It does not judge whether code is good.** That is out of reach, and attempting
   it would make this a linter with worse ergonomics.
 - **Intent records are only as true as the human who confirmed them.**

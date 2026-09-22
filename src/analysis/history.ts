@@ -15,8 +15,20 @@ import { UserError } from '../errors.js';
  * point in history.
  */
 
+/**
+ * Bump whenever a change alters what the numbers mean.
+ *
+ * A cached point is never re-scanned, because a commit's content cannot change
+ * — but the analysis can. Mixing points measured by different rules produces a
+ * line that looks like a trend and is an artefact of the tool changing under
+ * it, which is worse than having no line at all.
+ */
+export const ANALYSIS_VERSION = 3;
+
 export interface HistoryPoint {
   sha: string;
+  /** The analysis that produced this point; older ones are re-measured. */
+  version?: number;
   date: string;
   deadLoc: number;
   duplicateLoc: number;
@@ -116,8 +128,9 @@ export async function buildHistory(root: string, options: HistoryOptions): Promi
     options.onProgress?.(i + 1, commits.length, commit.sha);
 
     const cached = existing.get(commit.sha);
-    if (cached) {
-      // A commit's numbers cannot change, so never re-scan one we have.
+    if (cached && cached.version === ANALYSIS_VERSION) {
+      // A commit's content cannot change, so never re-scan one we have — as
+      // long as it was measured by the rules in force now.
       results.push(cached);
       continue;
     }
@@ -132,6 +145,7 @@ export async function buildHistory(root: string, options: HistoryOptions): Promi
           : 1;
       results.push({
         sha: commit.sha,
+        version: ANALYSIS_VERSION,
         date: commit.date,
         deadLoc: result.stats.deadLoc,
         duplicateLoc: result.stats.duplicateLoc,
@@ -151,11 +165,10 @@ export async function buildHistory(root: string, options: HistoryOptions): Promi
     }
   }
 
-  const merged = [...existing.values()];
-  for (const point of results) {
-    if (!existing.has(point.sha)) merged.push(point);
-  }
-  writeHistory(root, merged);
+  // Re-measured points replace their stale predecessors.
+  const merged = new Map(existing);
+  for (const point of results) merged.set(point.sha, point);
+  writeHistory(root, [...merged.values()]);
   return results;
 }
 
