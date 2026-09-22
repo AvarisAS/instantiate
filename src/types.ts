@@ -26,6 +26,12 @@ export interface CodeSymbol {
    * globally, so nothing ever references it by name and it can never be deleted.
    */
   ambient?: boolean;
+  /**
+   * Module scope contains executable statements, not only declarations. Such a
+   * file *does something* when loaded, so if nothing imports it, something runs
+   * it: a script, a benchmark, a migration, a CLI entry.
+   */
+  sideEffects?: boolean;
   /** Reachable from an entrypoint or public API surface. */
   loc: number;
   /** Normalised source used for duplicate detection. */

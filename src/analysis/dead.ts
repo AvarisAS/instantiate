@@ -41,6 +41,23 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
     else if (apiFiles.includes(symbol.file) && symbol.exported) roots.add(symbol.id);
   }
 
+  // A module nothing imports, which nevertheless runs code when loaded, is a
+  // script: something executes it even though no file names it. Treating it as
+  // an entrypoint is what stops every helper in a build script, a migration or
+  // a benchmark being reported as dead.
+  const imported = new Set(
+    graph.edges.filter((e) => e.kind === 'imports').map((e) => e.to),
+  );
+  for (const symbol of graph.symbols.values()) {
+    if (symbol.kind === 'module' && symbol.sideEffects && !imported.has(symbol.id)) {
+      roots.add(symbol.id);
+      for (const other of graph.symbols.values()) {
+        // Everything the script declares is in scope while it runs.
+        if (other.file === symbol.file) roots.add(other.id);
+      }
+    }
+  }
+
   const outgoing = new Map<string, string[]>();
   for (const edge of graph.edges) {
     const list = outgoing.get(edge.from);

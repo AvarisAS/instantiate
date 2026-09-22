@@ -36,6 +36,7 @@ export function buildGraph(config: Config): CodeGraph {
     });
     declareModule(sf, rel, text, symbols, declToId);
     sources.set(rel, stripComments(text));
+    markSideEffects(sf, rel, symbols);
     collectDeclarations(sf, rel, sf, symbols, declToId);
   }
 
@@ -141,10 +142,12 @@ function collectSatelliteEdges(
 
     while ((match = importPattern.exec(text)) !== null) {
       const specifier = match[1];
-      if (!specifier.startsWith('.') && !specifier.startsWith('#') && !specifier.startsWith('@/')) {
-        continue; // A package import cannot reach code in this repository.
+      // A bare package name cannot reach this repository's code, but an alias
+      // can, so anything the alias map knows about is worth resolving.
+      if (!specifier.startsWith('.') && expandAlias(specifier, file, config).length === 0) {
+        continue;
       }
-      const target = resolveSatellite(specifier, file, config.root, byFileName);
+      const target = resolveSatellite(specifier, file, config, byFileName);
       if (!target) continue;
 
       const line = text.slice(0, match.index).split('\n').length;
@@ -168,13 +171,12 @@ function collectSatelliteEdges(
 function resolveSatellite(
   specifier: string,
   from: string,
-  root: string,
+  config: Config,
   byFileName: Map<string, ts.SourceFile>,
 ): ts.SourceFile | undefined {
-  // `@/x` is the near-universal alias for the project root or its src directory.
-  const bases = specifier.startsWith('@/')
-    ? [join(root, specifier.slice(2)), join(root, 'src', specifier.slice(2))]
-    : [join(dirname(from), specifier)];
+  const bases = specifier.startsWith('.')
+    ? [join(dirname(from), specifier)]
+    : expandAlias(specifier, from, config);
 
   for (const base of bases) {
     const stem = base.replace(/\.(js|mjs|cjs|jsx)$/, '');
@@ -198,6 +200,27 @@ function resolveSatellite(
  * Registering the SourceFile node itself means enclosingSymbolId() walks up to
  * the module and attributes the reference to it, with no other change needed.
  */
+/**
+ * Does this file run code at module scope, beyond declaring things?
+ *
+ * A declaration-only module is a library. One with a call, a loop or an
+ * assignment at the top level performs work on load, which is the signature of
+ * something executed directly rather than imported.
+ */
+function markSideEffects(sf: ts.SourceFile, file: string, symbols: Map<string, CodeSymbol>): void {
+  const executable = sf.statements.some(
+    (statement) =>
+      ts.isExpressionStatement(statement) ||
+      ts.isIfStatement(statement) ||
+      ts.isForStatement(statement) ||
+      ts.isForOfStatement(statement) ||
+      ts.isWhileStatement(statement) ||
+      ts.isTryStatement(statement),
+  );
+  const module = symbols.get(`${file}#<module>`);
+  if (module) module.sideEffects = executable;
+}
+
 function declareModule(
   sf: ts.SourceFile,
   file: string,
@@ -485,7 +508,7 @@ function collectEdges(
     ts.isStringLiteralLike(node.arguments[0]) &&
     enclosing
   ) {
-    const target = resolveModule(node.arguments[0].text, sf, program, byFileName, config.root);
+    const target = resolveModule(node.arguments[0].text, sf, program, byFileName, config.root, config);
     if (target) {
       const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
       // We cannot tell which export is used, so every export of the module is
@@ -548,7 +571,7 @@ function collectEdges(
     const specifier = node.moduleSpecifier.text;
     const targets = specifier.startsWith('#')
       ? resolveSubpath(specifier, config.root, byFileName)
-      : [resolveModule(specifier, sf, program, byFileName, config.root)];
+      : [resolveModule(specifier, sf, program, byFileName, config.root, config)];
 
     for (const target of targets) {
       if (!target) continue;
@@ -561,6 +584,33 @@ function collectEdges(
       const starred =
         ts.isExportDeclaration(node) &&
         (!node.exportClause || ts.isNamespaceExport(node.exportClause));
+      // Named imports, resolved by name rather than through the checker.
+      //
+      // The program is built from one tsconfig, so in a monorepo the checker
+      // cannot resolve a workspace's own path aliases — `@/loaders/stars`
+      // returns an unresolved alias and the import produces no edge at all.
+      // The names are right there in the syntax, so use them.
+      const clause = ts.isImportDeclaration(node)
+        ? node.importClause?.namedBindings
+        : ts.isExportDeclaration(node)
+          ? node.exportClause
+          : undefined;
+
+      if (clause && (ts.isNamedImports(clause) || ts.isNamedExports(clause))) {
+        const targetFile = relPath(config.root, target.fileName);
+        for (const element of clause.elements) {
+          const importedName = (element.propertyName ?? element.name).text;
+          const id = `${targetFile}#${importedName}`;
+          if (symbols.has(id)) {
+            edges.push({ from: enclosing, to: id, kind: 'references', file, line: pos.line + 1 });
+          }
+        }
+      }
+
+      // A default import names nothing the exporter recognises, so anything the
+      // module exports may be what was taken.
+      const defaultImport = ts.isImportDeclaration(node) && node.importClause?.name;
+
       // `import * as tags from './x'` is almost always followed by `tags[key]`,
       // a dynamic lookup no static graph can trace. Every export of the module
       // is therefore potentially used, and hono's entire JSX intrinsic-element
@@ -570,7 +620,7 @@ function collectEdges(
         !!node.importClause?.namedBindings &&
         ts.isNamespaceImport(node.importClause.namedBindings);
 
-      if (starred || namespaceImport || specifier.startsWith('#')) {
+      if (starred || namespaceImport || defaultImport || specifier.startsWith('#')) {
         for (const exported of exportsOf(target, checker, declToId)) {
           edges.push({ from: enclosing, to: exported, kind: 'references', file, line: pos.line + 1 });
         }
@@ -630,6 +680,101 @@ function subpathImports(root: string): Map<string, string[]> {
 
 const subpathCache = new Map<string, Map<string, string[]>>();
 
+interface AliasScope {
+  /** Directory the tsconfig lives in; aliases resolve relative to it. */
+  dir: string;
+  /** `@/*` -> ['./src/*'], as written in compilerOptions.paths. */
+  paths: Map<string, string[]>;
+  baseUrl?: string;
+}
+
+const aliasCache = new Map<string, AliasScope[]>();
+
+/**
+ * Path aliases from every tsconfig in the repository, not just the root one.
+ *
+ * `import { x } from "@/components/y"` is how most Next.js code is written, and
+ * in a monorepo the tsconfig defining `@/*` belongs to the workspace, not the
+ * root. Resolving against the root config alone made every aliased import
+ * unresolvable, so a whole documentation site looked unreachable.
+ */
+function aliasScopes(config: Config): AliasScope[] {
+  const cached = aliasCache.get(config.root);
+  if (cached) return cached;
+
+  const scopes: AliasScope[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4) return; // Deeper than this and a config entry is the better answer.
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    if (entries.includes('tsconfig.json')) {
+      try {
+        const raw = ts.readConfigFile(join(dir, 'tsconfig.json'), ts.sys.readFile);
+        const options = raw.config?.compilerOptions ?? {};
+        const paths = new Map<string, string[]>();
+        for (const [pattern, targets] of Object.entries(options.paths ?? {})) {
+          if (Array.isArray(targets)) paths.set(pattern, targets as string[]);
+        }
+        if (paths.size > 0 || options.baseUrl) {
+          scopes.push({ dir, paths, baseUrl: options.baseUrl });
+        }
+      } catch {
+        // An unreadable or extends-only tsconfig contributes nothing.
+      }
+    }
+    for (const entry of entries) {
+      if (entry.startsWith('.') || entry === 'node_modules') continue;
+      const child = join(dir, entry);
+      try {
+        if (statSync(child).isDirectory()) walk(child, depth + 1);
+      } catch {
+        // Unreadable directory.
+      }
+    }
+  };
+  walk(config.root, 0);
+
+  // Deepest first, so a workspace's own aliases win over the root's.
+  scopes.sort((a, b) => b.dir.length - a.dir.length);
+  aliasCache.set(config.root, scopes);
+  return scopes;
+}
+
+/** Candidate file paths an aliased specifier could mean, for a file in `from`. */
+export function expandAlias(specifier: string, from: string, config: Config): string[] {
+  const out: string[] = [];
+  for (const scope of aliasScopes(config)) {
+    // Only a config that governs this file may rename its imports.
+    if (!from.startsWith(scope.dir)) continue;
+
+    for (const [pattern, targets] of scope.paths) {
+      const star = pattern.indexOf('*');
+      if (star === -1) {
+        if (specifier === pattern) {
+          for (const target of targets) out.push(join(scope.dir, target));
+        }
+        continue;
+      }
+      const prefix = pattern.slice(0, star);
+      const suffix = pattern.slice(star + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+      const middle = specifier.slice(prefix.length, specifier.length - suffix.length);
+      for (const target of targets) {
+        out.push(join(scope.dir, target.replace('*', middle)));
+      }
+    }
+
+    if (scope.baseUrl && !specifier.startsWith('.')) {
+      out.push(join(scope.dir, scope.baseUrl, specifier));
+    }
+  }
+  return out;
+}
+
 /**
  * Every file a subpath import can select, across conditions.
  *
@@ -663,6 +808,7 @@ function resolveModule(
   program: ts.Program,
   byFileName: Map<string, ts.SourceFile>,
   root: string,
+  config: Config,
 ): ts.SourceFile | undefined {
   if (specifier.startsWith('#')) return resolveSubpath(specifier, root, byFileName)[0];
 
@@ -678,10 +824,14 @@ function resolveModule(
   }
   // Resolution fails for `./x.js` pointing at `x.ts` under some configurations,
   // so fall back to matching the path we would have written on disk.
-  if (specifier.startsWith('.')) {
-    const base = join(dirname(from.fileName), specifier).replace(/\.(js|mjs|cjs)$/, '');
-    for (const extension of ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js']) {
-      const hit = byFileName.get(base + extension);
+  const bases = specifier.startsWith('.')
+    ? [join(dirname(from.fileName), specifier)]
+    : expandAlias(specifier, from.fileName, config);
+
+  for (const base of bases) {
+    const stem = base.replace(/\.(js|mjs|cjs|jsx)$/, '');
+    for (const extension of ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']) {
+      const hit = byFileName.get(stem + extension);
       if (hit) return hit;
     }
   }
