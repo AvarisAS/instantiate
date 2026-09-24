@@ -137,6 +137,12 @@ export interface Budget {
   createdAt: number;
 }
 
+export interface RepoInfo {
+  url: string;
+  ref: string;
+  blobPath: string;
+}
+
 export interface AnalysisResult {
   graph: CodeGraph;
   findings: Finding[];

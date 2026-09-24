@@ -50,6 +50,11 @@ counted by distinct symbol pairs. That is the question people ask before they
 ask about a function: is this change contained, or does it touch half the
 codebase.
 
+**Linked to the repository.** When the project has a git remote, the report
+carries it under the name and every file path links to that file on the remote,
+at the line in question — so a finding in a mail attachment is one click from
+the code it is about.
+
 **A trail through the codebase.** Following a call site into another file, and
 another, is how anybody reads unfamiliar code — and how you lose your place.
 Every move is recorded: back and forward, alt and an arrow key, and a trail

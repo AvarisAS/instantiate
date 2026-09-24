@@ -41,6 +41,8 @@ export function renderHtmlReport(result: ScanResult, findings: Finding[]): strin
 interface ReportData {
   title: string;
   generatedAt: string;
+  /** Where the code lives, so every path in the report can link to it. */
+  repo?: { url: string; label: string; blobBase?: string };
   stats: ScanResult['stats'];
   warnings: string[];
   treemap: SerialisedBox[];
@@ -148,6 +150,7 @@ function buildData(result: ScanResult, findings: Finding[]): ReportData {
   return {
     title: basename(result.config.root) || 'codebase',
     generatedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+    repo: describeRepo(result),
     stats: result.stats,
     warnings: result.warnings,
     treemap: boxes,
@@ -159,6 +162,22 @@ function buildData(result: ScanResult, findings: Finding[]): ReportData {
     fileFindings: Object.fromEntries(
       [...perFile.entries()].filter(([, e]) => e.findings.length > 0).map(([path, e]) => [path, e.findings]),
     ),
+  };
+}
+
+/**
+ * The remote, reduced to what the page needs: somewhere to point at, something
+ * short to print, and the prefix that turns a path into a link.
+ */
+function describeRepo(result: ScanResult): ReportData['repo'] {
+  const repo = result.repo;
+  if (!repo) return undefined;
+  const linkable = /github\.com|gitlab\.com|bitbucket\.org/.test(repo.url);
+  return {
+    url: repo.url,
+    // Host and path, without the scheme: it is a label, not an address bar.
+    label: repo.url.replace(/^https?:\/\//, ''),
+    blobBase: linkable ? `${repo.url}/${repo.blobPath}/${repo.ref}` : undefined,
   };
 }
 
@@ -607,9 +626,14 @@ body {
 .warnings { padding: 10px 16px 0; flex: 0 0 auto; }
 
 /* The one bar: identity, navigation, search and the numbers, in that order. */
-.bar-title { display: flex; gap: 8px; align-items: baseline; flex: 0 0 auto;
-             min-width: 0; margin-right: 4px; }
+.bar-title { display: grid; gap: 1px; flex: 0 0 auto; min-width: 0; margin-right: 4px; }
+.bar-line { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .bar-title strong { font-size: var(--step-0); letter-spacing: -0.01em; }
+.bar-repo { font-size: 10.5px; color: var(--muted); text-decoration: none;
+            font-family: var(--mono); max-width: 34ch; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+.bar-repo:hover { color: var(--accent); text-decoration: underline; }
+.bar-repo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bar-meta { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
             white-space: nowrap; }
 
@@ -829,7 +853,10 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 /* Source, with the lines to act on shaded in place. */
 .code-head { justify-content: space-between; }
 .code-path { font-family: var(--mono); font-size: var(--step--1); overflow: hidden;
-             text-overflow: ellipsis; white-space: nowrap; }
+             text-overflow: ellipsis; white-space: nowrap; color: var(--ink);
+             text-decoration: none; }
+.code-path.is-link:hover { color: var(--accent); text-decoration: underline; }
+.code-path.is-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .code-meta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
              flex: 0 0 auto; }
 .code { font-family: var(--mono); font-size: 11.5px; line-height: 1.65;
@@ -1541,8 +1568,15 @@ function codePane() {
   const ids = selected && selected.findings.length ? selected.findings : file.findings;
   const actions = ids.map((id) => FINDINGS.get(id)).filter(Boolean).map(actionCard).join('');
 
+  const remote = DATA.repo && DATA.repo.blobBase;
+  const pathHtml = remote
+    ? '<a class="code-path is-link" href="' + esc(remote + '/' + file.path) +
+        (selected ? '#L' + selected.line : '') + '" target="_blank" rel="noreferrer" ' +
+        'title="Open on ' + esc(DATA.repo.label) + '">' + esc(file.path) + '</a>'
+    : '<span class="code-path">' + esc(file.path) + '</span>';
+
   const head = '<div class="pane-head code-head">' +
-      '<span class="code-path">' + esc(file.path) + '</span>' +
+      pathHtml +
       '<button class="links-toggle' + (showLinks ? ' is-on' : '') + '" data-links="1" ' +
         'aria-expanded="' + showLinks + '">' +
         '<span class="links-icon">' + (showLinks ? '▾' : '▸') + '</span>' +
@@ -1745,9 +1779,15 @@ function toolbarHtml(files) {
       '<span class="stat-l">' + label + '</span></span>';
 
   return '<div class="ide-bar">' +
-      '<span class="bar-title" title="' + esc(DATA.title) + ' · ' + DATA.generatedAt + '">' +
-        '<strong>' + esc(DATA.title) + '</strong>' +
-        '<span class="bar-meta">' + s.files + ' files · ' + s.loc.toLocaleString('en-GB') + ' lines</span>' +
+      '<span class="bar-title">' +
+        '<span class="bar-line">' +
+          '<strong>' + esc(DATA.title) + '</strong>' +
+          '<span class="bar-meta">' + s.files + ' files · ' + s.loc.toLocaleString('en-GB') + ' lines</span>' +
+        '</span>' +
+        (DATA.repo
+          ? '<a class="bar-repo" href="' + esc(DATA.repo.url) + '" target="_blank" rel="noreferrer">' +
+              esc(DATA.repo.label) + '</a>'
+          : '') +
       '</span>' +
       '<span class="nav-pair">' +
         '<button class="nav-btn" data-nav="back" title="Back (alt + left arrow)" ' +

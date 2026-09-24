@@ -10,6 +10,8 @@ import { findDrift } from './analysis/drift.js';
 import { findContradictions } from './analysis/contradiction.js';
 import { UserError } from './errors.js';
 import type { Coverage } from './analysis/coverage.js';
+import type { RepoInfo } from './types.js';
+import { detectRepo } from './util/repo.js';
 import { buildPythonGraph } from './index/python.js';
 import { discoverFiles } from './index/extract.js';
 
@@ -25,6 +27,8 @@ export interface ScanOptions {
 export interface ScanResult extends AnalysisResult {
   config: Config;
   warnings: string[];
+  /** The remote this code lives on, when there is one. */
+  repo?: RepoInfo;
 }
 
 export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
@@ -84,13 +88,15 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
     analyseMs,
   };
 
+  const repo = detectRepo(root);
+
   const findings = rank([
     ...dead.findings,
     ...dupes.findings,
     ...drift.findings,
     ...contradictions.findings,
   ]);
-  return { graph, findings, concepts, stats, config, warnings };
+  return { graph, findings, concepts, stats, config, warnings, repo };
 }
 
 /**
