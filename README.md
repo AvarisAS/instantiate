@@ -50,6 +50,11 @@ counted by distinct symbol pairs. That is the question people ask before they
 ask about a function: is this change contained, or does it touch half the
 codebase.
 
+**A trail through the codebase.** Following a call site into another file, and
+another, is how anybody reads unfamiliar code — and how you lose your place.
+Every move is recorded: back and forward, alt and an arrow key, and a trail
+showing the path taken where each step goes back to it.
+
 **The report is a code browser.** Three panes: a file tree where each row is
 shaded by what is wrong inside it, that file's symbols with a filter, and the
 whole source with the lines to act on shaded in place and the remedy stated

@@ -687,6 +687,29 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
        min-height: 0; min-width: 0; }
 .ide-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
            border-bottom: 1px solid var(--line); background: var(--sunk); }
+.nav-pair { display: flex; gap: 2px; flex: 0 0 auto; }
+.nav-btn { border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft);
+           border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font: inherit;
+           font-size: 15px; line-height: 1; padding: 0; }
+.nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent);
+                                background: var(--accent-soft); }
+.nav-btn:disabled { opacity: 0.35; cursor: default; }
+.nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The path taken, so digging three files deep stays retraceable. */
+.trail { display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+         padding: 6px 12px; border-bottom: 1px solid var(--line);
+         background: var(--panel); font-size: 11px; }
+.trail-step { border: 0; background: none; font: inherit; font-family: var(--mono);
+              font-size: 11px; color: var(--muted); cursor: pointer; padding: 2px 6px;
+              border-radius: 4px; max-width: 26ch; overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+.trail-step:hover { background: var(--accent-soft); color: var(--accent); }
+.trail-step.is-here { color: var(--ink); background: var(--sunk); font-weight: 600; }
+.trail-step:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.trail-sep { color: var(--line-strong); }
+.trail-more { color: var(--muted); padding: 0 2px; }
+
 .ex-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
              padding: 7px 11px; border-radius: 7px; border: 1px solid var(--line-strong);
              background: var(--panel); color: var(--ink); }
@@ -947,6 +970,83 @@ let openFolders = new Set();
 let expandedActions = new Set();
 /** Whether the file-connection panel is open. */
 let showLinks = false;
+
+/* ---------------------------------------------------------------------------
+ * Navigation history.
+ *
+ * Following a call site into another file, and another, is how anybody
+ * actually reads unfamiliar code — and it is also how you lose your place.
+ * Every move is recorded, so the trail shows the path taken and each step on
+ * it goes back there. Forward entries are discarded on a new move, which is
+ * what a back button everywhere else does.
+ * ------------------------------------------------------------------------ */
+
+const history = [];
+let cursor = -1;
+
+function navigate(file, symbol) {
+  if (!file) return;
+  const current = history[cursor];
+  // Re-selecting exactly where you already are is not a step.
+  if (current && current.file === file && current.symbol === (symbol || null)) return;
+
+  history.length = cursor + 1;
+  history.push({ file, symbol: symbol || null });
+  cursor = history.length - 1;
+  apply();
+}
+
+function go(delta) {
+  const next = cursor + delta;
+  if (next < 0 || next >= history.length) return;
+  cursor = next;
+  apply();
+}
+
+/** Put the panes where the current history entry says they should be. */
+function apply() {
+  const entry = history[cursor];
+  if (!entry) return;
+  openFile = entry.file;
+  openSymbol = entry.symbol;
+  symbolFilter = '';
+  expandedFolds = new Set();
+  showMap = false;
+  revealInTree(openFile);
+  repaintExplorer();
+}
+
+/**
+ * A file's name, with its folder when the name alone says nothing.
+ *
+ * A trail reading "index.ts › cookie.ts › index.ts" tells you where you have
+ * been only if you already remember, which is the thing the trail is for.
+ */
+function shortPath(file) {
+  const parts = file.split('/');
+  const name = parts[parts.length - 1];
+  const generic = /^(index|main|mod|init|__init__)\./.test(name);
+  return generic && parts.length > 1 ? parts[parts.length - 2] + '/' + name : name;
+}
+
+/** The path taken, most recent last, each step a way back to it. */
+function trailHtml() {
+  if (history.length <= 1) return '';
+  const start = Math.max(0, cursor - 5);
+  const steps = history.slice(start, cursor + 1);
+
+  return '<nav class="trail" aria-label="Path taken">' +
+      (start > 0 ? '<span class="trail-more">…</span>' : '') +
+      steps.map((entry, i) => {
+        const index = start + i;
+        const label = entry.symbol
+          ? esc(shortPath(entry.file)) + ' · ' + esc(entry.symbol.split('#')[1].split('.').pop())
+          : esc(shortPath(entry.file));
+        return '<button class="trail-step' + (index === cursor ? ' is-here' : '') + '" ' +
+          'data-step="' + index + '" title="' + esc(entry.file) + '">' + label + '</button>';
+      }).join('<span class="trail-sep">›</span>') +
+    '</nav>';
+}
 
 /**
  * Open on the file most worth looking at.
@@ -1480,12 +1580,19 @@ function explorer() {
   const files = matchingFiles();
   return '<div class="ide">' +
       '<div class="ide-bar">' +
+        '<span class="nav-pair">' +
+          '<button class="nav-btn" data-nav="back" title="Back (alt + left arrow)" ' +
+            (cursor > 0 ? '' : 'disabled ') + 'aria-label="Back">‹</button>' +
+          '<button class="nav-btn" data-nav="forward" title="Forward (alt + right arrow)" ' +
+            (cursor < history.length - 1 ? '' : 'disabled ') + 'aria-label="Forward">›</button>' +
+        '</span>' +
         '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
           'value="' + esc(query) + '" autocomplete="off">' +
         '<span class="ex-count">' + files.length + ' of ' + DATA.files.length + ' files</span>' +
         '<button class="chip' + (showMap ? ' is-on' : '') + '" data-view="map" ' +
           'aria-pressed="' + showMap + '">map</button>' +
       '</div>' +
+      trailHtml() +
       '<div class="ide-panes">' +
         '<nav class="ide-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
         '<section class="ide-symbols" aria-label="Symbols">' + symbolsPane() + '</section>' +
@@ -1630,15 +1737,10 @@ app.addEventListener('click', (event) => {
   // A call site: open that file and land on the symbol it names.
   const ref = event.target.closest('.ref[data-file]');
   if (ref) {
-    openFile = ref.dataset.file;
-    const target = FILES.get(openFile);
+    const target = FILES.get(ref.dataset.file);
     const wanted = ref.dataset.symbol;
     const match = target && wanted ? target.symbols.find((sym) => sym.name === wanted) : null;
-    openSymbol = match ? match.id : null;
-    symbolFilter = '';
-    expandedFolds = new Set();
-    revealInTree(openFile);
-    repaintExplorer();
+    navigate(ref.dataset.file, match ? match.id : null);
     return;
   }
 
@@ -1658,8 +1760,13 @@ app.addEventListener('click', (event) => {
 
   const symButton = event.target.closest('[data-symbol]');
   if (symButton) {
-    openSymbol = openSymbol === symButton.dataset.symbol ? null : symButton.dataset.symbol;
-    repaintExplorer();
+    // Closing a symbol is not a move; opening one is a step into it.
+    if (openSymbol === symButton.dataset.symbol) {
+      openSymbol = null;
+      repaintExplorer();
+    } else {
+      navigate(openFile, symButton.dataset.symbol);
+    }
     return;
   }
 
@@ -1685,12 +1792,20 @@ app.addEventListener('click', (event) => {
 
   const linkRow = event.target.closest('.link-row[data-file]');
   if (linkRow) {
-    openFile = linkRow.dataset.file;
-    openSymbol = null;
-    symbolFilter = '';
-    expandedFolds = new Set();
-    revealInTree(openFile);
-    repaintExplorer();
+    navigate(linkRow.dataset.file, null);
+    return;
+  }
+
+  const step = event.target.closest('[data-step]');
+  if (step) {
+    cursor = Number(step.dataset.step);
+    apply();
+    return;
+  }
+
+  const nav = event.target.closest('[data-nav]');
+  if (nav) {
+    go(nav.dataset.nav === 'back' ? -1 : 1);
     return;
   }
 
@@ -1723,29 +1838,30 @@ app.addEventListener('click', (event) => {
 
   const fileButton = event.target.closest('[data-file]');
   if (fileButton) {
-    openFile = fileButton.dataset.file;
-    revealInTree(openFile);
-    openSymbol = null;
-    symbolFilter = '';
-    expandedFolds = new Set();
-    repaintExplorer();
+    navigate(fileButton.dataset.file, null);
     return;
   }
 
   // The map is a way in, not somewhere to stay: picking a file returns to it.
   const box = event.target.closest('[data-path]');
   if (box) {
-    openFile = box.dataset.path;
-    openSymbol = null;
-    symbolFilter = '';
-    expandedFolds = new Set();
-    revealInTree(openFile);
-    showMap = false;
-    repaintExplorer();
+    navigate(box.dataset.path, null);
   }
 });
 
-openFile = mostInteresting();
-if (openFile) revealInTree(openFile);
+const first = mostInteresting();
+if (first) {
+  history.push({ file: first, symbol: null });
+  cursor = 0;
+  openFile = first;
+  revealInTree(first);
+}
 render();
+
+// Alt and an arrow, the same keys a browser uses.
+document.addEventListener('keydown', (event) => {
+  if (!event.altKey) return;
+  if (event.key === 'ArrowLeft') { event.preventDefault(); go(-1); }
+  if (event.key === 'ArrowRight') { event.preventDefault(); go(1); }
+});
 `;
