@@ -593,6 +593,10 @@ const STYLE = `
 }
 
 * { box-sizing: border-box; }
+
+/* Icons size themselves against the text beside them, and inherit its colour. */
+.icon { width: 1.05em; height: 1.05em; flex: 0 0 auto; vertical-align: -0.16em; }
+.icon-sm { width: 0.85em; height: 0.85em; opacity: 0.7; }
 /*
  * A code browser is an application, not a document: it should take the window
  * and grow with it. Height in percentages rather than viewport units, so the
@@ -629,9 +633,9 @@ body {
 .bar-title { display: grid; gap: 1px; flex: 0 0 auto; min-width: 0; margin-right: 4px; }
 .bar-line { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .bar-title strong { font-size: var(--step-0); letter-spacing: -0.01em; }
-.bar-repo { font-size: 10.5px; color: var(--muted); text-decoration: none;
-            font-family: var(--mono); max-width: 34ch; overflow: hidden;
-            text-overflow: ellipsis; white-space: nowrap; }
+.bar-repo { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px;
+            color: var(--muted); text-decoration: none; font-family: var(--mono);
+            max-width: 34ch; white-space: nowrap; }
 .bar-repo:hover { color: var(--accent); text-decoration: underline; }
 .bar-repo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bar-meta { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
@@ -764,8 +768,11 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .trail-sep { color: var(--line-strong); }
 .trail-more { color: var(--muted); padding: 0 2px; }
 
-.ex-search { flex: 1 1 220px; min-width: 0; font: inherit; font-size: var(--step--1);
-             padding: 7px 11px; border: 1px solid var(--line-strong);
+.search-wrap { position: relative; display: flex; align-items: center; flex: 1 1 220px;
+               min-width: 0; }
+.search-icon { position: absolute; left: 9px; color: var(--muted); pointer-events: none; }
+.ex-search { width: 100%; min-width: 0; font: inherit; font-size: var(--step--1);
+             padding: 7px 11px 7px 29px; border: 1px solid var(--line-strong);
              background: var(--panel); color: var(--ink); }
 .ex-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ex-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
@@ -796,11 +803,13 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .pane-empty { color: var(--muted); padding: 22px 14px; font-size: var(--step--1); }
 .pane-head { display: flex; gap: 8px; align-items: center; padding: 8px 10px;
              border-bottom: 1px solid var(--line); background: var(--sunk); flex: 0 0 auto; }
-.pane-filter { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
-               padding: 5px 9px; border: 1px solid var(--line-strong);
+.pane-head .search-wrap { flex: 1 1 auto; }
+.pane-filter { width: 100%; min-width: 0; font: inherit; font-size: var(--step--1);
+               padding: 5px 9px 5px 27px; border: 1px solid var(--line-strong);
                background: var(--panel); color: var(--ink); }
+.pane-head .search-icon { left: 8px; }
 .pane-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.chip { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted); padding: 4px 10px; font: inherit; font-size: 11px;
+.chip { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted); padding: 4px 10px; font: inherit; font-size: 11px;
         cursor: pointer; flex: 0 0 auto; }
 .chip.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
@@ -814,7 +823,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .tree-dir.sev-high { border-left-color: var(--high); color: var(--ink-soft); }
 .tree-dir.sev-medium { border-left-color: var(--medium); color: var(--ink-soft); }
 .tree-dir.sev-low { border-left-color: var(--low); }
-.tree-chevron { flex: 0 0 9px; font-size: 9px; opacity: 0.7; }
+.tree-chevron { display: inline-flex; flex: 0 0 11px; opacity: 0.75; font-size: 10px; }
 .tree-file { display: flex; align-items: center; gap: 7px; width: 100%; border: 0;
              border-left: 3px solid transparent; background: none; font: inherit;
              font-size: var(--step--1); color: var(--ink-soft); text-align: left; cursor: pointer;
@@ -851,10 +860,10 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .sym-flag.high { color: var(--high); } .sym-flag.medium { color: var(--medium); }
 
 /* Source, with the lines to act on shaded in place. */
-.code-head { justify-content: space-between; }
-.code-path { font-family: var(--mono); font-size: var(--step--1); overflow: hidden;
-             text-overflow: ellipsis; white-space: nowrap; color: var(--ink);
-             text-decoration: none; }
+.head-spacer { flex: 1 1 auto; }
+.code-path { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono);
+             font-size: var(--step--1); overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; color: var(--ink); text-decoration: none; flex: 0 1 auto; }
 .code-path.is-link:hover { color: var(--accent); text-decoration: underline; }
 .code-path.is-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .code-meta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
@@ -880,8 +889,8 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
         font: inherit; font-size: 11px; color: var(--muted); padding: 3px 14px 3px 0;
         text-align: left; }
 .fold:hover { color: var(--accent); background: var(--accent-soft); }
-.fold-mark { flex: 0 0 5ch; text-align: right; padding-right: 8px;
-             font-family: var(--mono); letter-spacing: 1px; }
+.fold-mark { flex: 0 0 5ch; display: inline-flex; justify-content: flex-end;
+             padding-right: 8px; }
 .fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Tokens. Muted enough that the severity tints still read through them. */
@@ -905,7 +914,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .action-title { flex: 1 1 auto; font-weight: 550; font-size: var(--step--1); }
 .action-score { font-family: var(--mono); font-size: 11px; color: var(--muted);
                 font-variant-numeric: tabular-nums; }
-.action-chevron { font-size: 9px; color: var(--muted); }
+.action-chevron { display: inline-flex; color: var(--muted); font-size: 11px; }
 .action-detail { color: var(--ink-soft); font-size: var(--step--1); margin: 0 0 8px;
                  max-width: 74ch; }
 .action-do { margin: 0 12px 10px; font-size: var(--step--1); padding: 7px 10px;
@@ -927,14 +936,14 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
-.links-toggle { display: flex; align-items: center; gap: 7px; border: 1px solid var(--accent);
-                background: var(--accent-soft); color: var(--accent);
-                padding: 4px 11px; font: inherit; font-size: var(--step--1); cursor: pointer;
-                flex: 0 0 auto; font-weight: 550; }
+.links-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+                border: 1px solid var(--accent); background: var(--accent-soft);
+                color: var(--accent); padding: 4px 10px; font: inherit;
+                font-size: var(--step--1); cursor: pointer; flex: 0 0 auto; font-weight: 550; }
 .links-toggle:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .links-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .links-toggle.is-on { background: var(--accent); color: var(--panel); border-color: var(--accent); }
-.links-icon { font-size: 9px; }
+
 .links-tally { font-size: 11px; opacity: 0.85; font-weight: 400;
                font-variant-numeric: tabular-nums; }
 
@@ -1325,7 +1334,7 @@ function treeHtml(node, depth) {
       '<button class="tree-dir' + (summary.worst ? ' sev-' + summary.worst : '') + '" ' +
         'data-folder="' + esc(current.path) + '" style="--depth:' + depth + '" ' +
         'aria-expanded="' + open + '">' +
-        '<span class="tree-chevron">' + (open ? '▾' : '▸') + '</span>' +
+        '<span class="tree-chevron">' + icon(open ? 'chevron-down' : 'chevron-right') + '</span>' +
         '<span class="tree-name">' + esc(label) + '</span>' +
         (summary.count ? '<span class="tree-count">' + summary.count + '</span>' : '') +
       '</button>',
@@ -1394,10 +1403,13 @@ function symbolsPane() {
   });
 
   return '<div class="pane-head">' +
-      '<input class="pane-filter" id="sym-filter" type="search" placeholder="Filter symbols" ' +
-        'value="' + esc(symbolFilter) + '" autocomplete="off">' +
+      '<span class="search-wrap">' + icon('search', 'search-icon') +
+        '<input class="pane-filter" id="sym-filter" type="search" placeholder="Filter symbols" ' +
+          'value="' + esc(symbolFilter) + '" autocomplete="off">' +
+      '</span>' +
       '<button class="chip' + (onlyFlagged ? ' is-on' : '') + '" data-toggle="flagged" ' +
-        'aria-pressed="' + onlyFlagged + '">flagged only</button>' +
+        'aria-pressed="' + onlyFlagged + '" title="Show only symbols with findings">' +
+        icon('filter') + 'flagged</button>' +
     '</div>' +
     '<div class="pane-scroll">' +
       (shown.length
@@ -1408,6 +1420,46 @@ function symbolsPane() {
     '</div>';
 }
 
+
+
+/* ---------------------------------------------------------------------------
+ * Icons, from Lucide (ISC), inlined as paths.
+ *
+ * Not loaded from a CDN for the same reason the highlighter is hand-written: a
+ * report is read offline, and an icon set that fails to fetch leaves a page of
+ * empty buttons. Only the handful actually used travels with it.
+ * ------------------------------------------------------------------------ */
+
+const ICONS = {
+  'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+  'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  grid: '<rect width="7" height="7" x="3" y="3"/><rect width="7" height="7" x="14" y="3"/>' +
+        '<rect width="7" height="7" x="14" y="14"/><rect width="7" height="7" x="3" y="14"/>',
+  network: '<rect x="16" y="16" width="6" height="6"/><rect x="2" y="16" width="6" height="6"/>' +
+           '<rect x="9" y="2" width="6" height="6"/>' +
+           '<path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/>' +
+            '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/>',
+  filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+  ellipsis: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>' +
+         '<path d="M12 9v4"/><path d="M12 17h.01"/>',
+  code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+  arrowRight: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  arrowLeft: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
+};
+
+/** One icon, sized in ems so it follows whatever text it sits beside. */
+function icon(name, extraClass) {
+  const path = ICONS[name];
+  if (!path) return '';
+  return '<svg class="icon' + (extraClass ? ' ' + extraClass : '') + '" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true" focusable="false">' + path + '</svg>';
+}
 
 /* ---------------------------------------------------------------------------
  * Syntax colouring.
@@ -1572,20 +1624,23 @@ function codePane() {
   const pathHtml = remote
     ? '<a class="code-path is-link" href="' + esc(remote + '/' + file.path) +
         (selected ? '#L' + selected.line : '') + '" target="_blank" rel="noreferrer" ' +
-        'title="Open on ' + esc(DATA.repo.label) + '">' + esc(file.path) + '</a>'
+        'title="Open on ' + esc(DATA.repo.label) + '">' + esc(file.path) +
+        icon('external', 'icon-sm') + '</a>'
     : '<span class="code-path">' + esc(file.path) + '</span>';
 
   const head = '<div class="pane-head code-head">' +
       pathHtml +
+      '<span class="code-meta">' + file.loc + ' lines</span>' +
+      '<span class="head-spacer"></span>' +
       '<button class="links-toggle' + (showLinks ? ' is-on' : '') + '" data-links="1" ' +
         'aria-expanded="' + showLinks + '">' +
-        '<span class="links-icon">' + (showLinks ? '▾' : '▸') + '</span>' +
+        icon('network') +
         '<span>Connections</span>' +
         '<span class="links-tally">' +
-          file.usedBy.length + ' use this · uses ' + file.uses.length +
+          file.usedBy.length + ' in · ' + file.uses.length + ' out' +
         '</span>' +
+        icon(showLinks ? 'chevron-down' : 'chevron-right', 'icon-sm') +
       '</button>' +
-      '<span class="code-meta">' + file.loc + ' lines</span>' +
     '</div>' +
     (showLinks
       ? connectionsHtml(file) +
@@ -1679,7 +1734,7 @@ function codePane() {
       for (let k = n; k < end; k++) state = highlightLine(file.source[k - 1], lang, state).state;
       rows.push(
         '<button class="fold" data-fold="' + n + '" data-fold-end="' + (end - 1) + '">' +
-          '<span class="fold-mark">⋯</span>' +
+          '<span class="fold-mark">' + icon('ellipsis') + '</span>' +
           '<span class="fold-text">' + length + ' unremarkable lines</span>' +
         '</button>',
       );
@@ -1746,7 +1801,7 @@ function actionCard(finding) {
         '<span class="sev ' + finding.severity + '">' + finding.severity + '</span>' +
         '<span class="action-title">' + esc(finding.title) + '</span>' +
         '<span class="action-score">' + Math.round(finding.score * 100) + '%</span>' +
-        '<span class="action-chevron">' + (open ? '▾' : '▸') + '</span>' +
+        '<span class="action-chevron">' + icon(open ? 'chevron-down' : 'chevron-right') + '</span>' +
       '</button>' +
       (finding.action ? '<p class="action-do"><strong>Do:</strong> ' + esc(finding.action) + '</p>' : '') +
       (open
@@ -1786,7 +1841,7 @@ function toolbarHtml(files) {
         '</span>' +
         (DATA.repo
           ? '<a class="bar-repo" href="' + esc(DATA.repo.url) + '" target="_blank" rel="noreferrer">' +
-              esc(DATA.repo.label) + '</a>'
+              esc(DATA.repo.label) + icon('external', 'icon-sm') + '</a>'
           : '') +
       '</span>' +
       '<span class="nav-pair">' +
@@ -1795,11 +1850,13 @@ function toolbarHtml(files) {
         '<button class="nav-btn" data-nav="forward" title="Forward (alt + right arrow)" ' +
           (cursor < history.length - 1 ? '' : 'disabled ') + 'aria-label="Forward">›</button>' +
       '</span>' +
-      '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
-        'value="' + esc(query) + '" autocomplete="off">' +
+      '<span class="search-wrap">' + icon('search', 'search-icon') +
+        '<input id="ex-search" class="ex-search" type="search" ' +
+          'placeholder="Search files and symbols" value="' + esc(query) + '" autocomplete="off">' +
+      '</span>' +
       '<span class="ex-count">' + files.length + '/' + DATA.files.length + '</span>' +
       '<button class="chip' + (showMap ? ' is-on' : '') + '" data-view="map" ' +
-        'aria-pressed="' + showMap + '">map</button>' +
+        'aria-pressed="' + showMap + '">' + icon('grid') + 'map</button>' +
       '<span class="stats">' +
         stat(clean.toFixed(1) + '%', 'load-bearing', clean >= 95 ? 'clean' : 'alert') +
         stat(s.deadLoc.toLocaleString('en-GB'), 'dead', s.deadLoc === 0 ? 'clean' : '') +
