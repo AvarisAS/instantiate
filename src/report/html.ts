@@ -549,7 +549,7 @@ html, body { height: 100%; }
 * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px;
+*::-webkit-scrollbar-thumb { background: var(--line-strong);
                              border: 2px solid var(--panel); }
 *::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 body {
@@ -579,7 +579,7 @@ body {
 
 .stats { display: flex; flex-wrap: wrap; gap: 6px; }
 .stat { display: flex; gap: 6px; align-items: baseline; padding: 3px 10px;
-        border: 1px solid var(--line); border-radius: 999px; background: var(--sunk); }
+        border: 1px solid var(--line); background: var(--sunk); }
 .stat-n { font-weight: 640; font-variant-numeric: tabular-nums; font-size: var(--step--1); }
 .stat-l { font-size: 11px; color: var(--muted); }
 .stat.is-clean .stat-n { color: var(--good); }
@@ -594,8 +594,7 @@ h2 {
 .lede { color: var(--ink-soft); margin: 0 0 18px; max-width: 64ch; }
 
 .headline { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px;
-            margin: 28px 0 4px; background: var(--line); border: 1px solid var(--line);
-            border-radius: 12px; overflow: hidden; }
+            margin: 28px 0 4px; background: var(--line); border: 1px solid var(--line); overflow: hidden; }
 .tile { background: var(--panel); padding: 16px 18px; }
 .tile .n { font-size: var(--step-2); font-weight: 600; letter-spacing: -0.03em;
            font-variant-numeric: tabular-nums; display: block; line-height: 1.1; }
@@ -603,10 +602,9 @@ h2 {
 .tile.is-clean .n { color: var(--good); }
 .tile.is-alert .n { color: var(--high); }
 
-.warn { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--medium);
-        border-radius: 8px; padding: 12px 16px; margin: 16px 0; color: var(--ink-soft); }
+.warn { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--medium); padding: 12px 16px; margin: 16px 0; color: var(--ink-soft); }
 
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+.panel { background: var(--panel); border: 1px solid var(--line);
          padding: 16px; overflow: hidden; }
 svg { display: block; width: 100%; height: auto; }
 .box { stroke: var(--panel); stroke-width: 1; cursor: pointer; }
@@ -616,8 +614,7 @@ svg { display: block; width: 100%; height: auto; }
 .dir-label { font-size: 10px; fill: var(--muted); pointer-events: none; font-weight: 650; }
 
 /* Severity reads as a stripe before it reads as a word. */
-.finding { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--low);
-           border-radius: 8px; margin: 7px 0; overflow: hidden; }
+.finding { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--low); margin: 7px 0; overflow: hidden; }
 .finding[data-severity="high"] { border-left-color: var(--high); }
 .finding[data-severity="medium"] { border-left-color: var(--medium); }
 .finding summary { padding: 12px 16px; cursor: pointer; display: flex; gap: 12px;
@@ -626,7 +623,7 @@ svg { display: block; width: 100%; height: auto; }
 .finding summary:hover { background: var(--accent-soft); }
 .finding summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sev { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700;
-       flex: 0 0 auto; padding: 2px 7px; border-radius: 4px; background: var(--sunk); color: var(--low); }
+       flex: 0 0 auto; padding: 2px 7px; background: var(--sunk); color: var(--low); }
 .sev.high { color: var(--high); } .sev.medium { color: var(--medium); }
 .f-title { flex: 1 1 auto; font-weight: 500; }
 .f-meta { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
@@ -636,7 +633,7 @@ svg { display: block; width: 100%; height: auto; }
 
 .snips { display: grid; gap: 10px; grid-template-columns: 1fr; }
 .snips.side-by-side { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-pre { margin: 0; background: var(--sunk); border: 1px solid var(--line); border-radius: 6px;
+pre { margin: 0; background: var(--sunk); border: 1px solid var(--line);
       padding: 10px 12px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px;
       line-height: 1.55; }
 pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-block;
@@ -649,20 +646,19 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .variants td { padding: 6px 10px 6px 0; border-top: 1px solid var(--line);
                font-family: var(--mono); font-size: 12px; }
 .variants code { background: color-mix(in srgb, var(--high) 12%, transparent);
-                 padding: 1px 6px; border-radius: 4px; }
+                 padding: 1px 6px; }
 
 .bars { display: grid; gap: 5px; margin: 12px 0; }
 .bar-row { display: grid; grid-template-columns: minmax(110px, 170px) 1fr 46px; gap: 10px;
            align-items: center; font-size: var(--step--1); }
-.bar-track { height: 8px; background: var(--sunk); border-radius: 4px; overflow: hidden; }
-.bar-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.bar-track { height: 8px; background: var(--sunk); overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); }
 .bar-row.minor .bar-fill { background: var(--medium); }
 .bar-num { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: right;
            font-variant-numeric: tabular-nums; }
 
 .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0 4px; }
-.filters button { background: var(--panel); border: 1px solid var(--line); color: var(--ink-soft);
-                  border-radius: 999px; padding: 5px 14px; font-size: var(--step--1); cursor: pointer;
+.filters button { background: var(--panel); border: 1px solid var(--line); color: var(--ink-soft); padding: 5px 14px; font-size: var(--step--1); cursor: pointer;
                   font-family: inherit; }
 .filters button:hover { border-color: var(--line-strong); }
 .filters button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
@@ -673,7 +669,7 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
                 font: inherit; padding: 0; text-decoration: underline; }
 .legend { display: flex; gap: 16px; align-items: center; color: var(--muted);
           font-size: var(--step--1); margin-top: 10px; flex-wrap: wrap; }
-.swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+.swatch { display: inline-block; width: 11px; height: 11px;
           vertical-align: -1px; margin-right: 6px; border: 1px solid var(--line); }
 
 /* The three panes ---------------------------------------------------------
@@ -682,14 +678,13 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
  * a bullet beside it, so a glance down the tree reads as a heat profile of the
  * codebase; the source pane shades the exact lines to act on, in place.
  */
-.ide { border: 1px solid var(--line); border-radius: 12px 12px 0 0; overflow: hidden;
+.ide { border: 1px solid var(--line); overflow: hidden;
        background: var(--panel); flex: 1 1 auto; display: flex; flex-direction: column;
        min-height: 0; min-width: 0; }
 .ide-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
            border-bottom: 1px solid var(--line); background: var(--sunk); }
 .nav-pair { display: flex; gap: 2px; flex: 0 0 auto; }
-.nav-btn { border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft);
-           border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font: inherit;
+.nav-btn { border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); width: 28px; height: 28px; cursor: pointer; font: inherit;
            font-size: 15px; line-height: 1; padding: 0; }
 .nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent);
                                 background: var(--accent-soft); }
@@ -701,8 +696,7 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
          padding: 6px 12px; border-bottom: 1px solid var(--line);
          background: var(--panel); font-size: 11px; }
 .trail-step { border: 0; background: none; font: inherit; font-family: var(--mono);
-              font-size: 11px; color: var(--muted); cursor: pointer; padding: 2px 6px;
-              border-radius: 4px; max-width: 26ch; overflow: hidden;
+              font-size: 11px; color: var(--muted); cursor: pointer; padding: 2px 6px; max-width: 26ch; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; }
 .trail-step:hover { background: var(--accent-soft); color: var(--accent); }
 .trail-step.is-here { color: var(--ink); background: var(--sunk); font-weight: 600; }
@@ -711,7 +705,7 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .trail-more { color: var(--muted); padding: 0 2px; }
 
 .ex-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
-             padding: 7px 11px; border-radius: 7px; border: 1px solid var(--line-strong);
+             padding: 7px 11px; border: 1px solid var(--line-strong);
              background: var(--panel); color: var(--ink); }
 .ex-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ex-count { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
@@ -743,11 +737,10 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .pane-head { display: flex; gap: 8px; align-items: center; padding: 8px 10px;
              border-bottom: 1px solid var(--line); background: var(--sunk); flex: 0 0 auto; }
 .pane-filter { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
-               padding: 5px 9px; border-radius: 6px; border: 1px solid var(--line-strong);
+               padding: 5px 9px; border: 1px solid var(--line-strong);
                background: var(--panel); color: var(--ink); }
 .pane-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.chip { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted);
-        border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 11px;
+.chip { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted); padding: 4px 10px; font: inherit; font-size: 11px;
         cursor: pointer; flex: 0 0 auto; }
 .chip.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
@@ -778,7 +771,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 
 /* Symbols. */
 .sym { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
-       border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 6px;
+       border: 1px solid transparent; border-left: 3px solid transparent;
        background: none; font: inherit; cursor: pointer; padding: 5px 8px; color: var(--ink); }
 .sym:hover { background: var(--accent-soft); }
 .sym.is-open { border-color: var(--accent); background: var(--accent-soft); }
@@ -794,8 +787,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .sym-sub { font-size: 10px; color: var(--muted); }
 .sym-uses.is-dead { color: var(--high); font-weight: 600; }
 .sym-uses.is-quiet { font-style: italic; }
-.sym-flag { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
-            border-radius: 4px; padding: 1px 6px; background: var(--sunk); flex: 0 0 auto; }
+.sym-flag { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 1px 6px; background: var(--sunk); flex: 0 0 auto; }
 .sym-flag.high { color: var(--high); } .sym-flag.medium { color: var(--medium); }
 
 /* Source, with the lines to act on shaded in place. */
@@ -839,8 +831,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .tok-punct { color: var(--tok-punct); }
 
 /* What to do about it, above the code it concerns. */
-.action { border: 1px solid var(--line); border-left: 3px solid var(--low);
-          border-radius: 8px; margin: 8px 10px; background: var(--panel); overflow: hidden; }
+.action { border: 1px solid var(--line); border-left: 3px solid var(--low); margin: 8px 10px; background: var(--panel); overflow: hidden; }
 .action.high { border-left-color: var(--high); }
 .action.medium { border-left-color: var(--medium); }
 .action-head { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0;
@@ -855,7 +846,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .action-detail { color: var(--ink-soft); font-size: var(--step--1); margin: 0 0 8px;
                  max-width: 74ch; }
 .action-do { margin: 0 12px 10px; font-size: var(--step--1); padding: 7px 10px;
-             background: var(--accent-soft); border-radius: 6px; max-width: 74ch; }
+             background: var(--accent-soft); max-width: 74ch; }
 .action-more { padding: 0 12px 12px; border-top: 1px solid var(--line); margin-top: 2px;
                padding-top: 10px; }
 
@@ -867,14 +858,14 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .ref-list { display: grid; gap: 2px; }
 .ref { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0; background: none;
        font: inherit; font-size: var(--step--1); text-align: left; cursor: pointer;
-       padding: 3px 6px; border-radius: 5px; color: var(--ink-soft); }
+       padding: 3px 6px; color: var(--ink-soft); }
 .ref:hover { background: var(--accent-soft); color: var(--accent); }
 .ref-name { font-family: var(--mono); flex: 0 0 auto; }
 .ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
 .links-toggle { display: flex; align-items: center; gap: 7px; border: 1px solid var(--accent);
-                background: var(--accent-soft); color: var(--accent); border-radius: 7px;
+                background: var(--accent-soft); color: var(--accent);
                 padding: 4px 11px; font: inherit; font-size: var(--step--1); cursor: pointer;
                 flex: 0 0 auto; font-weight: 550; }
 .links-toggle:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
@@ -895,8 +886,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .link-list { display: grid; gap: 1px; }
 .link-row { display: flex; gap: 10px; align-items: baseline; width: 100%;
             border: 1px solid transparent; background: var(--panel); font: inherit;
-            font-size: var(--step--1); text-align: left; cursor: pointer; padding: 4px 8px;
-            border-radius: 5px; color: var(--ink-soft); }
+            font-size: var(--step--1); text-align: left; cursor: pointer; padding: 4px 8px; color: var(--ink-soft); }
 .link-row:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .link-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .link-path { font-family: var(--mono); font-size: 11px; flex: 1 1 auto; overflow: hidden;
@@ -912,7 +902,7 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
   html, body { height: auto; }
   #app { height: auto; }
   .shell-body { padding: 12px 16px; }
-  .ide { border-radius: 12px; }
+  .ide { }
   /* Nothing to drag when the panes are stacked. */
   .ide-panes { grid-template-columns: 1fr; }
   .splitter, .splitter-h { display: none; }
@@ -958,7 +948,7 @@ function treemap() {
 
   for (const b of dirs) {
     parts.push('<rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h +
-      '" fill="none" stroke="var(--line)" rx="3"/>');
+      '" fill="none" stroke="var(--line)"/>');
     if (b.h > 22 && b.w > 40) {
       parts.push('<text class="dir-label" x="' + (b.x + 4) + '" y="' + (b.y + 11) + '">' +
         esc(b.name) + '</text>');
@@ -967,7 +957,7 @@ function treemap() {
 
   for (const b of leaves) {
     parts.push('<rect class="box" data-path="' + esc(b.path) + '" x="' + b.x + '" y="' + b.y +
-      '" width="' + b.w + '" height="' + b.h + '" rx="2" fill="' + heatColour(b.heat) + '">' +
+      '" width="' + b.w + '" height="' + b.h + '" fill="' + heatColour(b.heat) + '">' +
       '<title>' + esc(b.path) + '\\n' + b.value + ' lines' +
       (b.findings ? ' · ' + b.findings + ' finding' + (b.findings === 1 ? '' : 's') : ' · clean') +
       '</title></rect>');
