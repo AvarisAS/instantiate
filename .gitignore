@@ -6,3 +6,6 @@ dist
 # one is the CI baseline, the other is the human contribution.
 .instantiate/report.html
 .instantiate/cache
+
+# Rendered previews, produced while checking the report by eye.
+.instantiate/preview*.png

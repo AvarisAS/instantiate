@@ -492,6 +492,12 @@ const STYLE = `
  * overflowing it on a phone.
  */
 html, body { height: 100%; }
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px;
+                             border: 2px solid var(--panel); }
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 body {
   margin: 0;
   background: var(--bg);
@@ -655,8 +661,16 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .chip.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
 /* Tree: the row carries the colour. */
-.tree-dir { padding: 3px 10px 3px calc(10px + var(--depth) * 11px); color: var(--muted);
-            font-size: 11px; font-weight: 650; }
+.tree-dir { display: flex; align-items: center; gap: 5px; width: 100%; border: 0;
+            border-left: 3px solid transparent; background: none; cursor: pointer;
+            font: inherit; font-size: 11px; font-weight: 650; color: var(--muted);
+            text-align: left; padding: 3px 8px 3px calc(8px + var(--depth) * 11px); }
+.tree-dir:hover { background: var(--accent-soft); color: var(--accent); }
+.tree-dir:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tree-dir.sev-high { border-left-color: var(--high); color: var(--ink-soft); }
+.tree-dir.sev-medium { border-left-color: var(--medium); color: var(--ink-soft); }
+.tree-dir.sev-low { border-left-color: var(--low); }
+.tree-chevron { flex: 0 0 9px; font-size: 9px; opacity: 0.7; }
 .tree-file { display: flex; align-items: center; gap: 7px; width: 100%; border: 0;
              border-left: 3px solid transparent; background: none; font: inherit;
              font-size: var(--step--1); color: var(--ink-soft); text-align: left; cursor: pointer;
@@ -735,17 +749,24 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 
 /* What to do about it, above the code it concerns. */
 .action { border: 1px solid var(--line); border-left: 3px solid var(--low);
-          border-radius: 8px; margin: 10px; padding: 11px 13px; background: var(--panel); }
+          border-radius: 8px; margin: 8px 10px; background: var(--panel); overflow: hidden; }
 .action.high { border-left-color: var(--high); }
 .action.medium { border-left-color: var(--medium); }
-.action-head { display: flex; gap: 10px; align-items: baseline; }
-.action-title { flex: 1 1 auto; font-weight: 550; }
+.action-head { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0;
+               background: none; font: inherit; text-align: left; cursor: pointer;
+               padding: 9px 12px; color: var(--ink); }
+.action-head:hover { background: var(--accent-soft); }
+.action-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.action-title { flex: 1 1 auto; font-weight: 550; font-size: var(--step--1); }
 .action-score { font-family: var(--mono); font-size: 11px; color: var(--muted);
                 font-variant-numeric: tabular-nums; }
-.action-detail { color: var(--ink-soft); font-size: var(--step--1); margin: 8px 0 0;
+.action-chevron { font-size: 9px; color: var(--muted); }
+.action-detail { color: var(--ink-soft); font-size: var(--step--1); margin: 0 0 8px;
                  max-width: 74ch; }
-.action-do { margin: 8px 0 0; font-size: var(--step--1); padding: 8px 10px;
+.action-do { margin: 0 12px 10px; font-size: var(--step--1); padding: 7px 10px;
              background: var(--accent-soft); border-radius: 6px; max-width: 74ch; }
+.action-more { padding: 0 12px 12px; border-top: 1px solid var(--line); margin-top: 2px;
+               padding-top: 10px; }
 
 /* References. */
 .refs { display: grid; gap: 5px; }
@@ -852,6 +873,33 @@ let onlyFlagged = false;
 let showMap = false;
 /** Line numbers inside folds the reader has opened. */
 let expandedFolds = new Set();
+/** Folders the reader has opened, beyond those open because of the selection. */
+let openFolders = new Set();
+/** Findings whose reasoning the reader has opened. */
+let expandedActions = new Set();
+
+/**
+ * Open on the file most worth looking at.
+ *
+ * A tool that opens empty shows nothing of what it does, and the first file
+ * alphabetically is almost always the least interesting — a benchmark, a
+ * fixture. Rank by the worst thing in each file, then by how much of it.
+ */
+function mostInteresting() {
+  const rank = { high: 3, medium: 2, low: 1 };
+  let best = null;
+  let bestScore = 0;
+  for (const file of DATA.files) {
+    if (!file.findings.length) continue;
+    const severity = worstSeverity(file.findings);
+    const score = (rank[severity] || 0) * 100 + file.findings.length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = file;
+    }
+  }
+  return best ? best.path : (DATA.files[0] && DATA.files[0].path) || null;
+}
 
 const FILES = new Map(DATA.files.map((f) => [f.path, f]));
 const FINDINGS = new Map(DATA.findings.map((f) => [f.id, f]));
@@ -893,22 +941,64 @@ function buildTree(files) {
   return root;
 }
 
+/** Findings anywhere beneath a folder, and the worst severity among them. */
+function folderSummary(node) {
+  let count = 0;
+  let worst = null;
+  const rank = { high: 3, medium: 2, low: 1 };
+  for (const file of node.files) {
+    count += file.findings.length;
+    const severity = worstSeverity(file.findings);
+    if (severity && (!worst || rank[severity] > rank[worst])) worst = severity;
+  }
+  for (const dir of node.dirs.values()) {
+    const inner = folderSummary(dir);
+    count += inner.count;
+    if (inner.worst && (!worst || rank[inner.worst] > rank[worst])) worst = inner.worst;
+  }
+  return { count, worst };
+}
+
+/**
+ * A tree of 384 files is unusable as a flat list, so folders start closed.
+ *
+ * Open by default: the path down to whatever file is selected, so the reader
+ * can always see where they are, and every folder when a search is running,
+ * since a hidden match is the same as no match.
+ */
+function isOpenFolder(path) {
+  if (query) return true;
+  if (openFolders.has(path)) return true;
+  return !!openFile && openFile.startsWith(path + '/');
+}
+
 function treeHtml(node, depth) {
   const parts = [];
+
   for (const dir of node.dirs.values()) {
-    // A folder with one folder inside reads better as one row: src/analysis.
+    // A folder containing only one folder reads better as one row: src/analysis.
     let label = dir.name;
     let current = dir;
     while (current.files.length === 0 && current.dirs.size === 1) {
       current = [...current.dirs.values()][0];
       label += '/' + current.name;
     }
+
+    const summary = folderSummary(current);
+    const open = isOpenFolder(current.path);
     parts.push(
-      '<div class="tree-dir" style="--depth:' + depth + '">' + esc(label) + '</div>' +
-        treeHtml(current, depth + 1),
+      '<button class="tree-dir' + (summary.worst ? ' sev-' + summary.worst : '') + '" ' +
+        'data-folder="' + esc(current.path) + '" style="--depth:' + depth + '" ' +
+        'aria-expanded="' + open + '">' +
+        '<span class="tree-chevron">' + (open ? '▾' : '▸') + '</span>' +
+        '<span class="tree-name">' + esc(label) + '</span>' +
+        (summary.count ? '<span class="tree-count">' + summary.count + '</span>' : '') +
+      '</button>',
     );
+    if (open) parts.push(treeHtml(current, depth + 1));
   }
-  for (const file of node.files.sort((a, b) => a.path.localeCompare(b.path))) {
+
+  for (const file of node.files.slice().sort((a, b) => a.path.localeCompare(b.path))) {
     const severity = worstSeverity(file.findings);
     const selected = file.path === openFile ? ' is-open' : '';
     parts.push(
@@ -1246,20 +1336,32 @@ function codePane() {
     '<div class="code">' + rows.join('') + '</div></div>';
 }
 
-/** One finding, stated as a problem and a remedy. */
+/**
+ * One finding, stated as a problem and a remedy.
+ *
+ * Collapsed to the two lines that matter — what is wrong, and what to do —
+ * because the code is what the reader came for, and three expanded cards push
+ * it off the screen entirely. The reasoning is a click away.
+ */
 function actionCard(finding) {
-  return '<div class="action ' + finding.severity + '">' +
-      '<div class="action-head">' +
+  const open = expandedActions.has(finding.id);
+  return '<div class="action ' + finding.severity + (open ? ' is-open' : '') + '">' +
+      '<button class="action-head" data-action="' + esc(finding.id) + '" aria-expanded="' + open + '">' +
         '<span class="sev ' + finding.severity + '">' + finding.severity + '</span>' +
         '<span class="action-title">' + esc(finding.title) + '</span>' +
         '<span class="action-score">' + Math.round(finding.score * 100) + '%</span>' +
-      '</div>' +
-      '<p class="action-detail">' + esc(finding.detail) + '</p>' +
+        '<span class="action-chevron">' + (open ? '▾' : '▸') + '</span>' +
+      '</button>' +
       (finding.action ? '<p class="action-do"><strong>Do:</strong> ' + esc(finding.action) + '</p>' : '') +
-      (finding.kind === 'drift' ? driftBars(finding) : '') +
-      (finding.kind === 'contradiction' ? conflictTable(finding) : '') +
-      (finding.kind === 'duplicate' && finding.snippets.length > 1
-        ? '<div class="snips side-by-side">' + finding.snippets.map(snippetHtml).join('') + '</div>'
+      (open
+        ? '<div class="action-more">' +
+            '<p class="action-detail">' + esc(finding.detail) + '</p>' +
+            (finding.kind === 'drift' ? driftBars(finding) : '') +
+            (finding.kind === 'contradiction' ? conflictTable(finding) : '') +
+            (finding.kind === 'duplicate' && finding.snippets.length > 1
+              ? '<div class="snips side-by-side">' + finding.snippets.map(snippetHtml).join('') + '</div>'
+              : '') +
+          '</div>'
         : '') +
     '</div>';
 }
@@ -1298,6 +1400,12 @@ function mapPane() {
         '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
       '</p>' +
     '</div>';
+}
+
+/** Open every folder on the way down to a file, so it can be seen. */
+function revealInTree(path) {
+  const parts = path.split('/');
+  for (let i = 1; i < parts.length; i++) openFolders.add(parts.slice(0, i).join('/'));
 }
 
 function repaintExplorer() {
@@ -1419,6 +1527,7 @@ app.addEventListener('click', (event) => {
     openSymbol = match ? match.id : null;
     symbolFilter = '';
     expandedFolds = new Set();
+    revealInTree(openFile);
     repaintExplorer();
     return;
   }
@@ -1457,6 +1566,24 @@ app.addEventListener('click', (event) => {
     return;
   }
 
+  const action = event.target.closest('[data-action]');
+  if (action) {
+    const id = action.dataset.action;
+    if (expandedActions.has(id)) expandedActions.delete(id);
+    else expandedActions.add(id);
+    repaintExplorer();
+    return;
+  }
+
+  const folder = event.target.closest('[data-folder]');
+  if (folder) {
+    const path = folder.dataset.folder;
+    if (openFolders.has(path)) openFolders.delete(path);
+    else openFolders.add(path);
+    repaintExplorer();
+    return;
+  }
+
   const fold = event.target.closest('[data-fold]');
   if (fold) {
     const from = Number(fold.dataset.fold);
@@ -1469,6 +1596,7 @@ app.addEventListener('click', (event) => {
   const fileButton = event.target.closest('[data-file]');
   if (fileButton) {
     openFile = fileButton.dataset.file;
+    revealInTree(openFile);
     openSymbol = null;
     symbolFilter = '';
     expandedFolds = new Set();
@@ -1483,10 +1611,13 @@ app.addEventListener('click', (event) => {
     openSymbol = null;
     symbolFilter = '';
     expandedFolds = new Set();
+    revealInTree(openFile);
     showMap = false;
     repaintExplorer();
   }
 });
 
+openFile = mostInteresting();
+if (openFile) revealInTree(openFile);
 render();
 `;
