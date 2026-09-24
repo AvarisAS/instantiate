@@ -717,10 +717,18 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .ex-count { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
             flex: 0 0 auto; }
 
-.ide-panes { display: grid; grid-template-columns: minmax(200px, 18vw) minmax(220px, 24vw) 1fr;
+.ide-panes { display: grid;
+             grid-template-columns: var(--w-tree, 240px) 6px var(--w-symbols, 280px) 6px 1fr;
              flex: 1 1 auto; min-height: 0; }
-.ide-tree, .ide-symbols { border-right: 1px solid var(--line); display: flex;
-                          flex-direction: column; min-width: 0; min-height: 0; }
+
+/* Splitters. Thin, and wide enough to grab. */
+.splitter { cursor: col-resize; background: var(--line); position: relative; }
+.splitter::after { content: ''; position: absolute; inset: 0 -3px; }
+.splitter:hover, .splitter:focus-visible { background: var(--accent); outline: none; }
+body.is-resizing { cursor: col-resize; user-select: none; }
+body.is-resizing .splitter { background: var(--accent); }
+.ide-tree, .ide-symbols { display: flex; flex-direction: column;
+                          min-width: 0; min-height: 0; }
 .ide-tree { overflow: auto; padding: 8px 0; }
 .ide-code { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .pane-scroll { overflow: auto; flex: 1 1 auto; padding: 8px; }
@@ -859,19 +867,37 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
-.links { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-         gap: 16px; padding: 12px 14px; border-bottom: 1px solid var(--line);
-         background: var(--sunk); max-height: 240px; overflow: auto; }
-.links-col { display: grid; gap: 5px; align-content: start; }
+.links-toggle { display: flex; align-items: center; gap: 7px; border: 1px solid var(--accent);
+                background: var(--accent-soft); color: var(--accent); border-radius: 7px;
+                padding: 4px 11px; font: inherit; font-size: var(--step--1); cursor: pointer;
+                flex: 0 0 auto; font-weight: 550; }
+.links-toggle:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.links-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.links-toggle.is-on { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+.links-icon { font-size: 9px; }
+.links-tally { font-size: 11px; opacity: 0.85; font-weight: 400;
+               font-variant-numeric: tabular-nums; }
+
+/* The connections panel: a place to be read, not a footnote. */
+.links { border-bottom: 2px solid var(--accent); background: var(--sunk);
+         max-height: 45%; overflow: auto; flex: 0 0 auto; }
+.links-lede { margin: 0; padding: 12px 16px 10px; color: var(--ink-soft);
+              font-size: var(--step--1); max-width: 78ch; }
+.links-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+              gap: 18px; padding: 0 16px 16px; }
+.links-col { display: grid; gap: 6px; align-content: start; }
+.links-col .refs-label { font-size: 11px; color: var(--ink); }
 .link-list { display: grid; gap: 1px; }
-.link-row { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0;
-            background: none; font: inherit; font-size: var(--step--1); text-align: left;
-            cursor: pointer; padding: 2px 6px; border-radius: 4px; color: var(--ink-soft); }
-.link-row:hover { background: var(--accent-soft); color: var(--accent); }
+.link-row { display: flex; gap: 10px; align-items: baseline; width: 100%;
+            border: 1px solid transparent; background: var(--panel); font: inherit;
+            font-size: var(--step--1); text-align: left; cursor: pointer; padding: 4px 8px;
+            border-radius: 5px; color: var(--ink-soft); }
+.link-row:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.link-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .link-path { font-family: var(--mono); font-size: 11px; flex: 1 1 auto; overflow: hidden;
              text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.link-count { font-family: var(--mono); font-size: 10px; color: var(--muted);
-              font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.link-count { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
+              flex: 0 0 auto; }
 
 .map-wrap { padding: 12px; }
 .legend { padding: 0 12px 12px; }
@@ -882,7 +908,11 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
   #app { height: auto; }
   .shell-body { padding: 12px 16px; }
   .ide { border-radius: 12px; }
+  /* Nothing to drag when the panes are stacked. */
   .ide-panes { grid-template-columns: 1fr; }
+  .splitter { display: none; }
+  .ide-tree, .ide-symbols { border-bottom: 1px solid var(--line); }
+  .links { max-height: none; }
   .ide-tree { border-right: 0; border-bottom: 1px solid var(--line); max-height: 200px; }
   .ide-symbols { border-right: 0; border-bottom: 1px solid var(--line); max-height: 280px; }
   .ide-code { max-height: 70vh; }
@@ -983,6 +1013,58 @@ let showLinks = false;
 
 const history = [];
 let cursor = -1;
+
+/* ---------------------------------------------------------------------------
+ * Pane widths.
+ *
+ * Deep folder names want a wide tree; reading code wants a narrow one. Which
+ * is right changes from file to file, so it belongs to the reader. Remembered
+ * per browser, and guarded: storage is unavailable in a private window and
+ * throws rather than returning nothing.
+ * ------------------------------------------------------------------------ */
+
+const MIN_PANE = 140;
+let treeWidth = 240;
+let symbolsWidth = 280;
+
+try {
+  const saved = JSON.parse(localStorage.getItem('instantiate:panes') || 'null');
+  if (saved && typeof saved.tree === 'number') treeWidth = saved.tree;
+  if (saved && typeof saved.symbols === 'number') symbolsWidth = saved.symbols;
+} catch { /* no storage, or it is blocked: the defaults are fine */ }
+
+function rememberPanes() {
+  try {
+    localStorage.setItem('instantiate:panes', JSON.stringify({ tree: treeWidth, symbols: symbolsWidth }));
+  } catch { /* nothing to do, and nothing worth telling the reader */ }
+}
+
+/** Drag a splitter, writing widths straight to the element so it stays smooth. */
+function startResize(event, which) {
+  const panes = event.target.closest('.ide-panes');
+  if (!panes) return;
+  const startX = event.clientX;
+  const startTree = treeWidth;
+  const startSymbols = symbolsWidth;
+  event.preventDefault();
+  document.body.classList.add('is-resizing');
+
+  const onMove = (move) => {
+    const delta = move.clientX - startX;
+    if (which === 'tree') treeWidth = Math.max(MIN_PANE, startTree + delta);
+    else symbolsWidth = Math.max(MIN_PANE, startSymbols + delta);
+    panes.style.setProperty('--w-tree', treeWidth + 'px');
+    panes.style.setProperty('--w-symbols', symbolsWidth + 'px');
+  };
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.body.classList.remove('is-resizing');
+    rememberPanes();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
 
 function navigate(file, symbol) {
   if (!file) return;
@@ -1405,11 +1487,13 @@ function codePane() {
 
   const head = '<div class="pane-head code-head">' +
       '<span class="code-path">' + esc(file.path) + '</span>' +
-      '<button class="chip' + (showLinks ? ' is-on' : '') + '" data-links="1" ' +
-        'aria-pressed="' + showLinks + '">' +
-        (file.usedBy.length || file.uses.length
-          ? String(file.usedBy.length) + ' in · ' + String(file.uses.length) + ' out'
-          : 'no links') +
+      '<button class="links-toggle' + (showLinks ? ' is-on' : '') + '" data-links="1" ' +
+        'aria-expanded="' + showLinks + '">' +
+        '<span class="links-icon">' + (showLinks ? '▾' : '▸') + '</span>' +
+        '<span>Connections</span>' +
+        '<span class="links-tally">' +
+          file.usedBy.length + ' use this · uses ' + file.uses.length +
+        '</span>' +
       '</button>' +
       '<span class="code-meta">' + file.loc + ' lines</span>' +
     '</div>' +
@@ -1529,7 +1613,9 @@ function connectionsHtml(file) {
     const rows = links.slice(0, 40).map((link) =>
       '<button class="link-row" data-file="' + esc(link.path) + '">' +
         '<span class="link-path">' + esc(link.path) + '</span>' +
-        '<span class="link-count" title="distinct symbols involved">' + link.count + '</span>' +
+        '<span class="link-count" title="' + link.count + ' symbols involved">' +
+          link.count + (link.count === 1 ? ' symbol' : ' symbols') +
+        '</span>' +
       '</button>').join('');
     const more = links.length > 40
       ? '<span class="refs-none">and ' + (links.length - 40) + ' more</span>'
@@ -1540,8 +1626,14 @@ function connectionsHtml(file) {
   };
 
   return '<div class="links">' +
-      column('used by these files', file.usedBy, 'nothing in this codebase imports or calls it') +
-      column('uses these files', file.uses, 'it depends on nothing here') +
+      '<p class="links-lede">Every file connected to this one. Click any of them to go there — ' +
+        'the trail above keeps your way back.</p>' +
+      '<div class="links-cols">' +
+        column('Files that use ' + esc(file.path.split('/').pop()),
+          file.usedBy, 'Nothing in this codebase imports or calls it.') +
+        column('Files it uses',
+          file.uses, 'It depends on nothing else here.') +
+      '</div>' +
     '</div>';
 }
 
@@ -1593,9 +1685,13 @@ function explorer() {
           'aria-pressed="' + showMap + '">map</button>' +
       '</div>' +
       trailHtml() +
-      '<div class="ide-panes">' +
+      '<div class="ide-panes" style="--w-tree:' + treeWidth + 'px;--w-symbols:' + symbolsWidth + 'px">' +
         '<nav class="ide-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
+        '<div class="splitter" data-split="tree" role="separator" aria-orientation="vertical" ' +
+          'tabindex="0" aria-label="Resize the file tree"></div>' +
         '<section class="ide-symbols" aria-label="Symbols">' + symbolsPane() + '</section>' +
+        '<div class="splitter" data-split="symbols" role="separator" aria-orientation="vertical" ' +
+          'tabindex="0" aria-label="Resize the symbol list"></div>' +
         '<section class="ide-code" aria-label="' + (showMap ? 'Map' : 'Source') + '">' +
           (showMap ? mapPane() : codePane()) +
         '</section>' +
@@ -1730,6 +1826,26 @@ app.addEventListener('input', (event) => {
     const hit = matchingFiles();
     if (hit.length === 1) openFile = hit[0].path;
   }
+  repaintExplorer();
+});
+
+app.addEventListener('pointerdown', (event) => {
+  const splitter = event.target.closest('[data-split]');
+  if (splitter) startResize(event, splitter.dataset.split);
+});
+
+// The keyboard reaches the splitters too, since a drag is not available to
+// everybody.
+app.addEventListener('keydown', (event) => {
+  const splitter = event.target.closest('[data-split]');
+  if (!splitter) return;
+  const step = event.shiftKey ? 48 : 16;
+  const delta = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+  if (!delta) return;
+  event.preventDefault();
+  if (splitter.dataset.split === 'tree') treeWidth = Math.max(MIN_PANE, treeWidth + delta);
+  else symbolsWidth = Math.max(MIN_PANE, symbolsWidth + delta);
+  rememberPanes();
   repaintExplorer();
 });
 
