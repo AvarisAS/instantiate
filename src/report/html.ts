@@ -77,11 +77,20 @@ interface LineMark {
   finding: string;
 }
 
+interface FileLink {
+  path: string;
+  /** How many distinct symbols of the other file are involved. */
+  count: number;
+}
+
 interface FileEntry {
   path: string;
   loc: number;
   symbols: SymbolEntry[];
   findings: string[];
+  /** Files that reach into this one, and the ones it reaches into. */
+  usedBy: FileLink[];
+  uses: FileLink[];
   /** The file's real source, for the code pane. Absent when too large to embed. */
   source?: string[];
   /** Line ranges implicated in a finding, for highlighting. */
@@ -233,12 +242,15 @@ function buildFileIndex(
     byFile.set(symbol.file, list);
   }
 
+  const links = fileLinks(result);
   const entries: FileEntry[] = [...perFile.entries()]
     .map(([path, entry]) => ({
       path,
       loc: entry.loc,
       findings: entry.findings,
       symbols: (byFile.get(path) ?? []).sort((a, b) => a.line - b.line),
+      usedBy: links.usedBy.get(path) ?? [],
+      uses: links.uses.get(path) ?? [],
       marks: [],
     }))
     .sort((a, b) => a.path.localeCompare(b.path));
@@ -246,6 +258,48 @@ function buildFileIndex(
   attachMarks(entries, result);
   attachSource(entries, result.config.root);
   return entries;
+}
+
+/**
+ * How the files connect.
+ *
+ * A symbol graph answers "who calls this function"; the question before that
+ * one is usually "what depends on this file at all" — which is what tells you
+ * whether a change is contained or whether it reaches half the codebase.
+ *
+ * Counted by distinct symbol pairs, so a file calling one helper forty times
+ * does not look like a heavier dependency than one calling forty helpers once.
+ */
+function fileLinks(result: ScanResult): {
+  usedBy: Map<string, FileLink[]>;
+  uses: Map<string, FileLink[]>;
+} {
+  const pairs = new Map<string, Set<string>>();
+
+  for (const edge of result.graph.edges) {
+    const from = edge.from.split('#')[0];
+    const to = edge.to.split('#')[0];
+    if (from === to) continue;
+    const key = from + '\u0000' + to;
+    const set = pairs.get(key) ?? new Set<string>();
+    set.add(edge.from + '>' + edge.to);
+    pairs.set(key, set);
+  }
+
+  const usedBy = new Map<string, FileLink[]>();
+  const uses = new Map<string, FileLink[]>();
+
+  for (const [key, involved] of pairs) {
+    const [from, to] = key.split('\u0000');
+    const count = involved.size;
+    (usedBy.get(to) ?? usedBy.set(to, []).get(to)!).push({ path: from, count });
+    (uses.get(from) ?? uses.set(from, []).get(from)!).push({ path: to, count });
+  }
+
+  const byWeight = (a: FileLink, b: FileLink) => b.count - a.count || a.path.localeCompare(b.path);
+  for (const list of usedBy.values()) list.sort(byWeight);
+  for (const list of uses.values()) list.sort(byWeight);
+  return { usedBy, uses };
 }
 
 /**
@@ -782,6 +836,20 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .ref-loc { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1 1 auto;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
+.links { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+         gap: 16px; padding: 12px 14px; border-bottom: 1px solid var(--line);
+         background: var(--sunk); max-height: 240px; overflow: auto; }
+.links-col { display: grid; gap: 5px; align-content: start; }
+.link-list { display: grid; gap: 1px; }
+.link-row { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0;
+            background: none; font: inherit; font-size: var(--step--1); text-align: left;
+            cursor: pointer; padding: 2px 6px; border-radius: 4px; color: var(--ink-soft); }
+.link-row:hover { background: var(--accent-soft); color: var(--accent); }
+.link-path { font-family: var(--mono); font-size: 11px; flex: 1 1 auto; overflow: hidden;
+             text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.link-count { font-family: var(--mono); font-size: 10px; color: var(--muted);
+              font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+
 .map-wrap { padding: 12px; }
 .legend { padding: 0 12px 12px; }
 
@@ -877,6 +945,8 @@ let expandedFolds = new Set();
 let openFolders = new Set();
 /** Findings whose reasoning the reader has opened. */
 let expandedActions = new Set();
+/** Whether the file-connection panel is open. */
+let showLinks = false;
 
 /**
  * Open on the file most worth looking at.
@@ -1235,8 +1305,15 @@ function codePane() {
 
   const head = '<div class="pane-head code-head">' +
       '<span class="code-path">' + esc(file.path) + '</span>' +
+      '<button class="chip' + (showLinks ? ' is-on' : '') + '" data-links="1" ' +
+        'aria-pressed="' + showLinks + '">' +
+        (file.usedBy.length || file.uses.length
+          ? String(file.usedBy.length) + ' in · ' + String(file.uses.length) + ' out'
+          : 'no links') +
+      '</button>' +
       '<span class="code-meta">' + file.loc + ' lines</span>' +
-    '</div>';
+    '</div>' +
+    (showLinks ? connectionsHtml(file) : '');
 
   if (!file.source) {
     return head + '<div class="pane-scroll">' + (actions || '') +
@@ -1335,6 +1412,39 @@ function codePane() {
   return head + '<div class="pane-scroll code-scroll">' + actions +
     '<div class="code">' + rows.join('') + '</div></div>';
 }
+
+/**
+ * What reaches this file, and what it reaches.
+ *
+ * Answered at the file level because that is the question people ask before
+ * they ask about a function: is this change contained, or does it touch half
+ * the codebase.
+ */
+function connectionsHtml(file) {
+  const column = (label, links, empty) => {
+    if (links.length === 0) {
+      return '<div class="links-col"><span class="refs-label">' + label + '</span>' +
+        '<span class="refs-none">' + empty + '</span></div>';
+    }
+    const rows = links.slice(0, 40).map((link) =>
+      '<button class="link-row" data-file="' + esc(link.path) + '">' +
+        '<span class="link-path">' + esc(link.path) + '</span>' +
+        '<span class="link-count" title="distinct symbols involved">' + link.count + '</span>' +
+      '</button>').join('');
+    const more = links.length > 40
+      ? '<span class="refs-none">and ' + (links.length - 40) + ' more</span>'
+      : '';
+    return '<div class="links-col">' +
+      '<span class="refs-label">' + label + ' (' + links.length + ')</span>' +
+      '<div class="link-list">' + rows + more + '</div></div>';
+  };
+
+  return '<div class="links">' +
+      column('used by these files', file.usedBy, 'nothing in this codebase imports or calls it') +
+      column('uses these files', file.uses, 'it depends on nothing here') +
+    '</div>';
+}
+
 
 /**
  * One finding, stated as a problem and a remedy.
@@ -1563,6 +1673,24 @@ app.addEventListener('click', (event) => {
       openSymbol = owner.id;
       repaintExplorer();
     }
+    return;
+  }
+
+  const links = event.target.closest('[data-links]');
+  if (links) {
+    showLinks = !showLinks;
+    repaintExplorer();
+    return;
+  }
+
+  const linkRow = event.target.closest('.link-row[data-file]');
+  if (linkRow) {
+    openFile = linkRow.dataset.file;
+    openSymbol = null;
+    symbolFilter = '';
+    expandedFolds = new Set();
+    revealInTree(openFile);
+    repaintExplorer();
     return;
   }
 

@@ -36,6 +36,7 @@ ${bold('instantiate')} — see what is actually in your codebase
   ${dim('--json           machine-readable output')}
   ${dim('--all            ignore dismissals')}
   ${dim('--include-tests  look for duplicates inside test files too')}
+  ${dim('--coverage <f>   merge a coverage report, so dynamically reached code counts')}
 `;
 
 interface Args {
@@ -47,6 +48,7 @@ interface Args {
   all: boolean;
   includeTests: boolean;
   out?: string;
+  coverage?: string;
   port: number;
   days: number;
   points: number;
@@ -71,6 +73,7 @@ function parseArgs(argv: string[]): Args {
     if (arg === '--root') args.root = resolve(argv[++i] ?? '.');
     else if (arg === '--limit') args.limit = Number(argv[++i]);
     else if (arg === '--out') args.out = argv[++i];
+    else if (arg === '--coverage') args.coverage = argv[++i];
     else if (arg === '--port') args.port = Number(argv[++i]);
     else if (arg === '--days') args.days = Number(argv[++i]);
     else if (arg === '--points') args.points = Number(argv[++i]);
@@ -120,7 +123,10 @@ async function main(): Promise<number> {
   }
 
   const config = loadConfigFor(args);
-  const result = await scan({ root: args.root, config });
+  const coverage = args.coverage
+    ? (await import('./analysis/coverage.js')).readCoverage(args.root, args.coverage)
+    : undefined;
+  const result = await scan({ root: args.root, config, coverage });
   const all = visible(result.findings, args);
   const limit = args.limit ?? result.config.maxFindings;
 

@@ -9,12 +9,15 @@ import { findConcepts } from './analysis/concepts.js';
 import { findDrift } from './analysis/drift.js';
 import { findContradictions } from './analysis/contradiction.js';
 import { UserError } from './errors.js';
+import type { Coverage } from './analysis/coverage.js';
 import { buildPythonGraph } from './index/python.js';
 import { discoverFiles } from './index/extract.js';
 
 export interface ScanOptions {
   root?: string;
   config?: Config;
+  /** A coverage report, which turns guesses about dynamic dispatch into facts. */
+  coverage?: Coverage;
   /** Reuse a cached graph when no file has changed. */
   cache?: boolean;
 }
@@ -40,13 +43,19 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
   const indexMs = Date.now() - indexStart;
 
   const analyseStart = Date.now();
-  const dead = findDeadCode(graph, config);
+  const dead = findDeadCode(graph, config, options.coverage);
   const dupes = findDuplicates(graph, config);
   const drift = findDrift(graph);
   const contradictions = findContradictions(graph);
   const concepts = findConcepts(graph, config.concepts);
   const analyseMs = Date.now() - analyseStart;
 
+  if (options.coverage) {
+    warnings.push(
+      `Merged a ${options.coverage.format} coverage report covering ${options.coverage.files} files. ` +
+        'Anything the tests executed counts as reached, however it was reached.',
+    );
+  }
   if (dead.noEntrypoints) {
     warnings.push(
       'No entrypoint matched a file, so dead-code detection was skipped. ' +

@@ -1,6 +1,7 @@
 import type { CodeGraph, Finding, CodeSymbol } from '../types.js';
 import type { Config } from '../config.js';
 import { matchesAny } from '../util/glob.js';
+import type { Coverage } from './coverage.js';
 
 /** Findings below this confidence are shown, but do not count towards the budget. */
 const METRIC_CONFIDENCE_FLOOR = 0.5;
@@ -20,7 +21,7 @@ export interface DeadResult {
  * The result is only as trustworthy as the entrypoint set, so a run that resolves
  * no entrypoints reports that rather than declaring the whole repo dead.
  */
-export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
+export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Coverage): DeadResult {
   const entryFiles = [...graph.files.keys()].filter((f) => matchesAny(f, config.entrypoints));
   const apiFiles = [...graph.files.keys()].filter((f) => matchesAny(f, config.publicApi));
   graph.entrypoints = entryFiles;
@@ -99,6 +100,26 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
     }
   }
 
+  /*
+   * Anything a test run executed is alive, however it was reached.
+   *
+   * This is the only honest answer to dynamic dispatch: a container resolving
+   * a name from a string leaves no trace in the source, and it leaves a very
+   * clear one in a coverage report.
+   */
+  if (coverage) {
+    for (const symbol of graph.symbols.values()) {
+      const lines = coverage.executed.get(symbol.file);
+      if (!lines) continue;
+      for (let line = symbol.line; line <= symbol.endLine; line++) {
+        if (lines.has(line)) {
+          roots.add(symbol.id);
+          break;
+        }
+      }
+    }
+  }
+
   const reachable = walk(roots);
 
   const noEntrypoints = entryFiles.length === 0 && apiFiles.length === 0;
@@ -146,7 +167,11 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
     if (symbol.kind === 'module') continue;
     if (orphanFiles.has(symbol.file)) continue; // Reported as one file above.
 
-    const score = confidence(symbol, dynamicNames);
+    // A file the coverage report mentions was watched while the tests ran, so
+    // "never reached" stops being a guess about dynamic dispatch and becomes an
+    // observation. The usual hedges no longer apply.
+    const covered = !!coverage && coverage.executed.has(symbol.file);
+    const score = covered ? 0.97 : confidence(symbol, dynamicNames);
     // Same rule as duplicates: the headline number, and therefore the CI budget,
     // only counts what we would stand behind.
     if (score >= METRIC_CONFIDENCE_FLOOR) deadLoc += symbol.loc;
@@ -155,7 +180,11 @@ export function findDeadCode(graph: CodeGraph, config: Config): DeadResult {
       kind: 'dead',
       severity: symbol.loc >= 40 ? 'high' : symbol.loc >= 10 ? 'medium' : 'low',
       title: `${symbol.name} is never reached`,
-      detail: buildDetail(symbol, dynamicNames),
+      detail:
+        buildDetail(symbol, dynamicNames) +
+        (covered
+          ? ' A coverage report was supplied and no test executed it, so it is not reached dynamically either.'
+          : ''),
       action: symbol.exported
         ? `Delete ${symbol.name}, unless something outside this codebase imports it — check before removing an export.`
         : `Delete ${symbol.name}. Nothing inside this codebase can reach it.`,

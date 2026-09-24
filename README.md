@@ -45,6 +45,11 @@ guessed. Invisible in any single file, obvious in aggregate.
 saying 4% dead is a fact nobody acts on; the same number rising for six weeks is
 an argument, and a falling one is the reason to keep going.
 
+**File connections** — for any file, what reaches into it and what it reaches,
+counted by distinct symbol pairs. That is the question people ask before they
+ask about a function: is this change contained, or does it touch half the
+codebase.
+
 **The report is a code browser.** Three panes: a file tree where each row is
 shaded by what is wrong inside it, that file's symbols with a filter, and the
 whole source with the lines to act on shaded in place and the remedy stated
@@ -195,6 +200,19 @@ Duplicate detection knows the difference between redundancy and design:
   built at runtime, `require(variable)`. Names that appear in string literals are
   downgraded rather than reported confidently, but a graph will still be wrong
   where a codebase is most confusing. Low confidence means *question*, not fact.
+
+  The answer to that is not more static analysis — it is a test run. Pass a
+  coverage report and anything the tests executed counts as reached, however it
+  was reached:
+
+  ```bash
+  npx vitest --coverage           # or: coverage run -m pytest && coverage json
+  npx instantiate scan --coverage coverage/coverage-final.json
+  ```
+
+  Istanbul (nyc, c8, Vitest, Jest) and `coverage.py` are both understood. What
+  is left is unreachable *and* untested, which is a stronger finding than
+  either alone — such findings are reported at 97% rather than the usual 70%.
 - **Parallel sets are demoted, not understood.** Sixty translations are
   recognised as structure rather than redundancy by their shape — one name per
   file — not because the tool knows what a translation is.
