@@ -603,20 +603,21 @@ body {
   min-height: 0;
 }
 
-.shell-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline;
-              justify-content: space-between;
-              padding: 12px 20px; border-bottom: 1px solid var(--line);
-              background: var(--panel); flex: 0 0 auto; }
-.shell-title { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline;
-               min-width: 0; }
-.shell-body { flex: 1 1 auto; min-height: 0; display: flex; padding: 12px 16px 0; }
-.warnings { padding: 10px 20px 0; flex: 0 0 auto; }
+.shell-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.warnings { padding: 10px 16px 0; flex: 0 0 auto; }
 
-.stats { display: flex; flex-wrap: wrap; gap: 6px; }
-.stat { display: flex; gap: 6px; align-items: baseline; padding: 3px 10px;
+/* The one bar: identity, navigation, search and the numbers, in that order. */
+.bar-title { display: flex; gap: 8px; align-items: baseline; flex: 0 0 auto;
+             min-width: 0; margin-right: 4px; }
+.bar-title strong { font-size: var(--step-0); letter-spacing: -0.01em; }
+.bar-meta { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+            white-space: nowrap; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 4px; flex: 0 0 auto; }
+.stat { display: flex; gap: 5px; align-items: baseline; padding: 2px 8px;
         border: 1px solid var(--line); background: var(--sunk); }
-.stat-n { font-weight: 640; font-variant-numeric: tabular-nums; font-size: var(--step--1); }
-.stat-l { font-size: 11px; color: var(--muted); }
+.stat-n { font-weight: 640; font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.stat-l { font-size: 10.5px; color: var(--muted); }
 .stat.is-clean .stat-n { color: var(--good); }
 .stat.is-alert .stat-n { color: var(--high); }
 
@@ -713,11 +714,11 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
  * a bullet beside it, so a glance down the tree reads as a heat profile of the
  * codebase; the source pane shades the exact lines to act on, in place.
  */
-.ide { border: 1px solid var(--line); overflow: hidden;
-       background: var(--panel); flex: 1 1 auto; display: flex; flex-direction: column;
-       min-height: 0; min-width: 0; }
-.ide-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px;
-           border-bottom: 1px solid var(--line); background: var(--sunk); }
+.ide { border: 0; overflow: hidden; background: var(--panel); flex: 1 1 auto;
+       display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.ide-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+           padding: 8px 12px; border-bottom: 1px solid var(--line);
+           background: var(--sunk); flex: 0 0 auto; }
 .nav-pair { display: flex; gap: 2px; flex: 0 0 auto; }
 .nav-btn { border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); width: 28px; height: 28px; cursor: pointer; font: inherit;
            font-size: 15px; line-height: 1; padding: 0; }
@@ -739,11 +740,11 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
 .trail-sep { color: var(--line-strong); }
 .trail-more { color: var(--muted); padding: 0 2px; }
 
-.ex-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--step--1);
+.ex-search { flex: 1 1 220px; min-width: 0; font: inherit; font-size: var(--step--1);
              padding: 7px 11px; border: 1px solid var(--line-strong);
              background: var(--panel); color: var(--ink); }
 .ex-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ex-count { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums;
+.ex-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
             flex: 0 0 auto; }
 
 .ide-panes { display: grid;
@@ -935,7 +936,8 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
    letterboxes the map top and bottom. */
 .map-wrap { padding: 12px; flex: 0 0 auto; }
 .map-wrap svg { width: 100%; height: auto; }
-.legend { padding: 4px 14px 12px; flex: 0 0 auto; }
+.legend { padding: 10px 14px; flex: 0 0 auto; margin: 0;
+          border-bottom: 1px solid var(--line); background: var(--sunk); }
 .legend-note { color: var(--muted); }
 
 @media (max-width: 900px) {
@@ -1726,22 +1728,52 @@ function actionCard(finding) {
     '</div>';
 }
 
+/**
+ * One bar.
+ *
+ * The title, the numbers and the controls were three rows of chrome above a
+ * page whose whole point is the code beneath them. They say little enough
+ * between them to share a line, and the line they share is the only one that
+ * is not code.
+ */
+function toolbarHtml(files) {
+  const s = DATA.stats;
+  const clean = s.loc > 0 ? (1 - (s.deadLoc + s.duplicateLoc) / s.loc) * 100 : 100;
+  const stat = (value, label, state) =>
+    '<span class="stat' + (state ? ' is-' + state : '') + '">' +
+      '<span class="stat-n">' + value + '</span>' +
+      '<span class="stat-l">' + label + '</span></span>';
+
+  return '<div class="ide-bar">' +
+      '<span class="bar-title" title="' + esc(DATA.title) + ' · ' + DATA.generatedAt + '">' +
+        '<strong>' + esc(DATA.title) + '</strong>' +
+        '<span class="bar-meta">' + s.files + ' files · ' + s.loc.toLocaleString('en-GB') + ' lines</span>' +
+      '</span>' +
+      '<span class="nav-pair">' +
+        '<button class="nav-btn" data-nav="back" title="Back (alt + left arrow)" ' +
+          (cursor > 0 ? '' : 'disabled ') + 'aria-label="Back">‹</button>' +
+        '<button class="nav-btn" data-nav="forward" title="Forward (alt + right arrow)" ' +
+          (cursor < history.length - 1 ? '' : 'disabled ') + 'aria-label="Forward">›</button>' +
+      '</span>' +
+      '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
+        'value="' + esc(query) + '" autocomplete="off">' +
+      '<span class="ex-count">' + files.length + '/' + DATA.files.length + '</span>' +
+      '<button class="chip' + (showMap ? ' is-on' : '') + '" data-view="map" ' +
+        'aria-pressed="' + showMap + '">map</button>' +
+      '<span class="stats">' +
+        stat(clean.toFixed(1) + '%', 'load-bearing', clean >= 95 ? 'clean' : 'alert') +
+        stat(s.deadLoc.toLocaleString('en-GB'), 'dead', s.deadLoc === 0 ? 'clean' : '') +
+        stat(s.duplicateLoc.toLocaleString('en-GB'), 'duplicated', s.duplicateLoc === 0 ? 'clean' : '') +
+        stat(String(s.driftCount), 'drifting', s.driftCount === 0 ? 'clean' : '') +
+        stat(String(s.contradictionCount), 'conflicting', s.contradictionCount === 0 ? 'clean' : 'alert') +
+      '</span>' +
+    '</div>';
+}
+
 function explorer() {
   const files = matchingFiles();
   return '<div class="ide">' +
-      '<div class="ide-bar">' +
-        '<span class="nav-pair">' +
-          '<button class="nav-btn" data-nav="back" title="Back (alt + left arrow)" ' +
-            (cursor > 0 ? '' : 'disabled ') + 'aria-label="Back">‹</button>' +
-          '<button class="nav-btn" data-nav="forward" title="Forward (alt + right arrow)" ' +
-            (cursor < history.length - 1 ? '' : 'disabled ') + 'aria-label="Forward">›</button>' +
-        '</span>' +
-        '<input id="ex-search" class="ex-search" type="search" placeholder="Search files and symbols" ' +
-          'value="' + esc(query) + '" autocomplete="off">' +
-        '<span class="ex-count">' + files.length + ' of ' + DATA.files.length + ' files</span>' +
-        '<button class="chip' + (showMap ? ' is-on' : '') + '" data-view="map" ' +
-          'aria-pressed="' + showMap + '">map</button>' +
-      '</div>' +
+      toolbarHtml(files) +
       trailHtml() +
       '<div class="ide-panes" style="--w-tree:' + sizes.tree + 'px;--w-symbols:' + sizes.symbols + 'px">' +
         '<nav class="ide-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
@@ -1763,14 +1795,14 @@ function mapPane() {
       '<span class="code-path">Every file, sized by lines, shaded by findings</span>' +
       '<span class="code-meta">click to open</span>' +
     '</div>' +
+    '<p class="legend">' +
+      '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
+      '<span><span class="swatch" style="background:var(--heat1)"></span>some findings</span>' +
+      '<span><span class="swatch" style="background:var(--heat2)"></span>mostly findings</span>' +
+      '<span class="legend-note">box size = lines of code</span>' +
+    '</p>' +
     '<div class="pane-scroll map-scroll">' +
       '<div class="map-wrap">' + treemap() + '</div>' +
-      '<p class="legend">' +
-        '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
-        '<span><span class="swatch" style="background:var(--heat1)"></span>some findings</span>' +
-        '<span><span class="swatch" style="background:var(--heat2)"></span>mostly findings</span>' +
-        '<span class="legend-note">box size = lines of code</span>' +
-      '</p>' +
     '</div>';
 }
 
@@ -1838,55 +1870,15 @@ function tile(value, label, state) {
 }
 
 function render() {
-  const s = DATA.stats;
-  const clean = s.loc > 0 ? (1 - (s.deadLoc + s.duplicateLoc) / s.loc) * 100 : 100;
-
-  const chip = (value, label, state) =>
-    '<span class="stat' + (state ? ' is-' + state : '') + '">' +
-      '<span class="stat-n">' + value + '</span>' +
-      '<span class="stat-l">' + label + '</span></span>';
-
   app.innerHTML =
-    '<header class="shell-head">' +
-      '<div class="shell-title">' +
-        '<h1>' + esc(DATA.title) + '</h1>' +
-        '<span class="sub">' + DATA.generatedAt + ' · ' + s.files + ' files · ' +
-          s.loc.toLocaleString('en-GB') + ' lines</span>' +
-      '</div>' +
-      '<div class="stats">' +
-        chip(clean.toFixed(1) + '%', 'load-bearing', clean >= 95 ? 'clean' : 'alert') +
-        chip(s.deadLoc.toLocaleString('en-GB'), 'dead', s.deadLoc === 0 ? 'clean' : '') +
-        chip(s.duplicateLoc.toLocaleString('en-GB'), 'duplicated', s.duplicateLoc === 0 ? 'clean' : '') +
-        chip(String(s.driftCount), 'drifting', s.driftCount === 0 ? 'clean' : '') +
-        chip(String(s.contradictionCount), 'conflicting', s.contradictionCount === 0 ? 'clean' : 'alert') +
-      '</div>' +
-    '</header>' +
-
     (DATA.warnings.length
       ? '<div class="warnings">' + DATA.warnings.map((w) => '<p class="warn">' + esc(w) + '</p>').join('') + '</div>'
       : '') +
-
     '<div id="explorer-host" class="shell-body">' + explorer() + '</div>' +
-
-    '<footer>Generated by <strong>instantiate</strong>. A static graph cannot see dynamic ' +
-      'dispatch, so treat low-confidence findings as questions, not facts.</footer>';
+    '<footer>Generated by <strong>instantiate</strong> on ' + DATA.generatedAt + '. ' +
+      'A static graph cannot see dynamic dispatch, so treat low-confidence findings as ' +
+      'questions, not facts.</footer>';
 }
-
-app.addEventListener('input', (event) => {
-  if (event.target.id === 'sym-filter') {
-    symbolFilter = event.target.value.trim();
-    repaintExplorer();
-    return;
-  }
-  if (event.target.id !== 'ex-search') return;
-  query = event.target.value.trim();
-  // Searching for a symbol should land on it, not merely narrow the tree.
-  if (query) {
-    const hit = matchingFiles();
-    if (hit.length === 1) openFile = hit[0].path;
-  }
-  repaintExplorer();
-});
 
 app.addEventListener('pointerdown', (event) => {
   const splitter = event.target.closest('[data-split]');
