@@ -721,12 +721,18 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
              grid-template-columns: var(--w-tree, 240px) 6px var(--w-symbols, 280px) 6px 1fr;
              flex: 1 1 auto; min-height: 0; }
 
-/* Splitters. Thin, and wide enough to grab. */
-.splitter { cursor: col-resize; background: var(--line); position: relative; }
+/* Splitters. Thin, and wide enough to grab: the padded ::after widens the
+   target without widening the line. */
+.splitter, .splitter-h { background: var(--line); position: relative; flex: 0 0 auto; }
+.splitter { cursor: col-resize; }
+.splitter-h { cursor: row-resize; height: 6px; }
 .splitter::after { content: ''; position: absolute; inset: 0 -3px; }
-.splitter:hover, .splitter:focus-visible { background: var(--accent); outline: none; }
+.splitter-h::after { content: ''; position: absolute; inset: -3px 0; }
+.splitter:hover, .splitter:focus-visible,
+.splitter-h:hover, .splitter-h:focus-visible { background: var(--accent); outline: none; }
 body.is-resizing { cursor: col-resize; user-select: none; }
-body.is-resizing .splitter { background: var(--accent); }
+body.is-resizing-y { cursor: row-resize; user-select: none; }
+body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--accent); }
 .ide-tree, .ide-symbols { display: flex; flex-direction: column;
                           min-width: 0; min-height: 0; }
 .ide-tree { overflow: auto; padding: 8px 0; }
@@ -879,8 +885,7 @@ body.is-resizing .splitter { background: var(--accent); }
                font-variant-numeric: tabular-nums; }
 
 /* The connections panel: a place to be read, not a footnote. */
-.links { border-bottom: 2px solid var(--accent); background: var(--sunk);
-         max-height: 45%; overflow: auto; flex: 0 0 auto; }
+.links { background: var(--sunk); overflow: auto; flex: 0 0 auto; }
 .links-lede { margin: 0; padding: 12px 16px 10px; color: var(--ink-soft);
               font-size: var(--step--1); max-width: 78ch; }
 .links-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -910,9 +915,10 @@ body.is-resizing .splitter { background: var(--accent); }
   .ide { border-radius: 12px; }
   /* Nothing to drag when the panes are stacked. */
   .ide-panes { grid-template-columns: 1fr; }
-  .splitter { display: none; }
+  .splitter, .splitter-h { display: none; }
   .ide-tree, .ide-symbols { border-bottom: 1px solid var(--line); }
-  .links { max-height: none; }
+  /* Stacked, the panel sizes itself; the stored height does not apply. */
+  .links { height: auto !important; max-height: none; border-bottom: 2px solid var(--accent); }
   .ide-tree { border-right: 0; border-bottom: 1px solid var(--line); max-height: 200px; }
   .ide-symbols { border-right: 0; border-bottom: 1px solid var(--line); max-height: 280px; }
   .ide-code { max-height: 70vh; }
@@ -1024,42 +1030,52 @@ let cursor = -1;
  * ------------------------------------------------------------------------ */
 
 const MIN_PANE = 140;
-let treeWidth = 240;
-let symbolsWidth = 280;
+const MIN_LINKS = 90;
+const sizes = { tree: 240, symbols: 280, links: 260 };
 
 try {
   const saved = JSON.parse(localStorage.getItem('instantiate:panes') || 'null');
-  if (saved && typeof saved.tree === 'number') treeWidth = saved.tree;
-  if (saved && typeof saved.symbols === 'number') symbolsWidth = saved.symbols;
+  for (const key of ['tree', 'symbols', 'links']) {
+    if (saved && typeof saved[key] === 'number') sizes[key] = saved[key];
+  }
 } catch { /* no storage, or it is blocked: the defaults are fine */ }
 
 function rememberPanes() {
   try {
-    localStorage.setItem('instantiate:panes', JSON.stringify({ tree: treeWidth, symbols: symbolsWidth }));
+    localStorage.setItem('instantiate:panes', JSON.stringify(sizes));
   } catch { /* nothing to do, and nothing worth telling the reader */ }
 }
 
-/** Drag a splitter, writing widths straight to the element so it stays smooth. */
+/** The connections panel grows downwards; the side panes grow rightwards. */
+const isVertical = (which) => which === 'links';
+const floorFor = (which) => (isVertical(which) ? MIN_LINKS : MIN_PANE);
+
+/** Apply the current sizes without a repaint, so a drag stays smooth. */
+function writeSizes() {
+  const panes = document.querySelector('.ide-panes');
+  if (panes) {
+    panes.style.setProperty('--w-tree', sizes.tree + 'px');
+    panes.style.setProperty('--w-symbols', sizes.symbols + 'px');
+  }
+  const links = document.querySelector('.links');
+  if (links) links.style.height = sizes.links + 'px';
+}
+
 function startResize(event, which) {
-  const panes = event.target.closest('.ide-panes');
-  if (!panes) return;
-  const startX = event.clientX;
-  const startTree = treeWidth;
-  const startSymbols = symbolsWidth;
+  const start = isVertical(which) ? event.clientY : event.clientX;
+  const from = sizes[which];
   event.preventDefault();
-  document.body.classList.add('is-resizing');
+  document.body.classList.add(isVertical(which) ? 'is-resizing-y' : 'is-resizing');
 
   const onMove = (move) => {
-    const delta = move.clientX - startX;
-    if (which === 'tree') treeWidth = Math.max(MIN_PANE, startTree + delta);
-    else symbolsWidth = Math.max(MIN_PANE, startSymbols + delta);
-    panes.style.setProperty('--w-tree', treeWidth + 'px');
-    panes.style.setProperty('--w-symbols', symbolsWidth + 'px');
+    const now = isVertical(which) ? move.clientY : move.clientX;
+    sizes[which] = Math.max(floorFor(which), from + (now - start));
+    writeSizes();
   };
   const onUp = () => {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
-    document.body.classList.remove('is-resizing');
+    document.body.classList.remove('is-resizing', 'is-resizing-y');
     rememberPanes();
   };
   document.addEventListener('pointermove', onMove);
@@ -1497,7 +1513,11 @@ function codePane() {
       '</button>' +
       '<span class="code-meta">' + file.loc + ' lines</span>' +
     '</div>' +
-    (showLinks ? connectionsHtml(file) : '');
+    (showLinks
+      ? connectionsHtml(file) +
+        '<div class="splitter-h" data-split="links" role="separator" aria-orientation="horizontal" ' +
+          'tabindex="0" aria-label="Resize the connections panel"></div>'
+      : '');
 
   if (!file.source) {
     return head + '<div class="pane-scroll">' + (actions || '') +
@@ -1625,7 +1645,7 @@ function connectionsHtml(file) {
       '<div class="link-list">' + rows + more + '</div></div>';
   };
 
-  return '<div class="links">' +
+  return '<div class="links" style="height:' + sizes.links + 'px">' +
       '<p class="links-lede">Every file connected to this one. Click any of them to go there — ' +
         'the trail above keeps your way back.</p>' +
       '<div class="links-cols">' +
@@ -1685,7 +1705,7 @@ function explorer() {
           'aria-pressed="' + showMap + '">map</button>' +
       '</div>' +
       trailHtml() +
-      '<div class="ide-panes" style="--w-tree:' + treeWidth + 'px;--w-symbols:' + symbolsWidth + 'px">' +
+      '<div class="ide-panes" style="--w-tree:' + sizes.tree + 'px;--w-symbols:' + sizes.symbols + 'px">' +
         '<nav class="ide-tree" aria-label="Files">' + treeHtml(buildTree(files), 0) + '</nav>' +
         '<div class="splitter" data-split="tree" role="separator" aria-orientation="vertical" ' +
           'tabindex="0" aria-label="Resize the file tree"></div>' +
@@ -1839,14 +1859,15 @@ app.addEventListener('pointerdown', (event) => {
 app.addEventListener('keydown', (event) => {
   const splitter = event.target.closest('[data-split]');
   if (!splitter) return;
+  const which = splitter.dataset.split;
   const step = event.shiftKey ? 48 : 16;
-  const delta = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+  const [less, more] = isVertical(which) ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight'];
+  const delta = event.key === less ? -step : event.key === more ? step : 0;
   if (!delta) return;
   event.preventDefault();
-  if (splitter.dataset.split === 'tree') treeWidth = Math.max(MIN_PANE, treeWidth + delta);
-  else symbolsWidth = Math.max(MIN_PANE, symbolsWidth + delta);
+  sizes[which] = Math.max(floorFor(which), sizes[which] + delta);
   rememberPanes();
-  repaintExplorer();
+  writeSizes();
 });
 
 app.addEventListener('click', (event) => {
