@@ -461,33 +461,45 @@ const STYLE = `
  * plane. A font that fails to load silently would take the typography with it.
  */
 :root {
-  /* Cool slate neutrals, biased very slightly towards the accent's blue. */
-  --bg: #f7f8fa;
-  --panel: #ffffff;
-  --sunk: #eef0f4;
-  --ink: #15181d;
-  --ink-soft: #454b56;
-  --muted: #6d737f;
-  --line: #dde1e8;
-  --line-strong: #c3c9d4;
-  --accent: #1f5fa8;
-  --accent-soft: #e8f0fa;
-  /* Semantic, and deliberately not the accent. */
-  --high: #a8321f;
-  --medium: #8a6410;
-  --low: #6d737f;
-  --good: #1f6b46;
-  --focus-tint: color-mix(in srgb, var(--accent) 8%, transparent);
-  --tok-comment: #6a7a86;
-  --tok-string: #1a6b52;
-  --tok-keyword: #9a3d9e;
-  --tok-number: #9a5518;
-  --tok-type: #1f5fa8;
-  --tok-fn: #6b4ea8;
-  --tok-punct: #5c6470;
-  --tint-high: color-mix(in srgb, var(--high) 9%, transparent);
-  --tint-medium: color-mix(in srgb, var(--medium) 10%, transparent);
-  --tint-low: color-mix(in srgb, var(--low) 7%, transparent);
+  /*
+   * Flexoki, by Steph Ango. An ink-on-paper palette: warm neutrals that hold
+   * their character in both themes, and colours picked to sit on them without
+   * shouting. Chosen over the cool blue-greys because a page full of code
+   * should read like a printed page, not like a control panel.
+   */
+  --bg: #FFFCF0;          /* paper */
+  --panel: #FFFCF0;
+  --sunk: #F2F0E5;        /* base-50 */
+  --ink: #100F0F;         /* black */
+  --ink-soft: #403E3C;    /* base-800 */
+  --muted: #6F6E69;       /* base-600 */
+  --line: #DAD8CE;        /* base-150 */
+  --line-strong: #B7B5AC; /* base-300 */
+  --accent: #205EA6;      /* blue-600 */
+  --accent-soft: #E1ECF7;
+  --high: #AF3029;        /* red-600 */
+  --medium: #AD8301;      /* yellow-600 */
+  --low: #878580;         /* base-500 */
+  --good: #66800B;        /* green-600 */
+
+  /* Three bands, not a gradient: "clean", "some" and "mostly" have to be
+     distinguishable at a glance in a map of four hundred boxes. */
+  --heat0: #EDEBE0;
+  --heat1: #E8C88A;
+  --heat2: #C86A56;
+
+  --focus-tint: color-mix(in srgb, var(--accent) 10%, transparent);
+  --tok-comment: #878580;  /* base-500 */
+  --tok-string: #66800B;   /* green-600 */
+  --tok-keyword: #5E409D;  /* purple-600 */
+  --tok-number: #BC5215;   /* orange-600 */
+  --tok-type: #205EA6;     /* blue-600 */
+  --tok-fn: #24837B;       /* cyan-600 */
+  --tok-punct: #6F6E69;
+  --tint-high: color-mix(in srgb, var(--high) 10%, transparent);
+  --tint-medium: color-mix(in srgb, var(--medium) 13%, transparent);
+  --tint-low: color-mix(in srgb, var(--low) 9%, transparent);
+
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --step--1: 0.78rem;
@@ -496,48 +508,71 @@ const STYLE = `
   --step-2: 1.6rem;
   --step-3: 2.1rem;
 }
+
+/* Flexoki's dark side: the same ink, inverted. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --focus-tint: color-mix(in srgb, var(--accent) 14%, transparent);
-    --tok-comment: #6f7d8c;
-    --tok-string: #79c4a0;
-    --tok-keyword: #d79bdd;
-    --tok-number: #e0a56a;
-    --tok-type: #7fb6ee;
-    --tok-fn: #b6a5ee;
-    --tok-punct: #8b93a0;
-    --bg: #101216;
-    --panel: #171a20;
-    --sunk: #1e222a;
-    --ink: #e9ecf1;
-    --ink-soft: #b3bac6;
-    --muted: #868d9b;
-    --line: #272c35;
-    --line-strong: #39404c;
-    --accent: #6ba6e8;
-    --accent-soft: #17222f;
-    --high: #e0705a;
-    --medium: #d2a03f;
-    --low: #868d9b;
-    --good: #5cb98a;
+    --bg: #100F0F;          /* black */
+    --panel: #1C1B1A;       /* base-950 */
+    --sunk: #282726;        /* base-900 */
+    --ink: #CECDC3;         /* base-200 */
+    --ink-soft: #B7B5AC;    /* base-300 */
+    --muted: #878580;       /* base-500 */
+    --line: #343331;        /* base-850 */
+    --line-strong: #575653; /* base-700 */
+    --accent: #4385BE;      /* blue-400 */
+    --accent-soft: #1A2733;
+    --high: #D14D41;        /* red-400 */
+    --medium: #D0A215;      /* yellow-400 */
+    --low: #878580;
+    --good: #879A39;        /* green-400 */
+    --heat0: #2A2927;
+    --heat1: #6E5A1E;
+    --heat2: #8C3B31;
+    --focus-tint: color-mix(in srgb, var(--accent) 18%, transparent);
+    --tok-comment: #6F6E69;  /* base-600 */
+    --tok-string: #879A39;   /* green-400 */
+    --tok-keyword: #8B7EC8;  /* purple-400 */
+    --tok-number: #DA702C;   /* orange-400 */
+    --tok-type: #4385BE;     /* blue-400 */
+    --tok-fn: #3AA99F;       /* cyan-400 */
+    --tok-punct: #878580;
+    --tint-high: color-mix(in srgb, var(--high) 14%, transparent);
+    --tint-medium: color-mix(in srgb, var(--medium) 16%, transparent);
+    --tint-low: color-mix(in srgb, var(--low) 12%, transparent);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #101216;
-  --panel: #171a20;
-  --sunk: #1e222a;
-  --ink: #e9ecf1;
-  --ink-soft: #b3bac6;
-  --muted: #868d9b;
-  --line: #272c35;
-  --line-strong: #39404c;
-  --accent: #6ba6e8;
-  --accent-soft: #17222f;
-  --high: #e0705a;
-  --medium: #d2a03f;
-  --low: #868d9b;
-  --good: #5cb98a;
+  --bg: #100F0F;
+  --panel: #1C1B1A;
+  --sunk: #282726;
+  --ink: #CECDC3;
+  --ink-soft: #B7B5AC;
+  --muted: #878580;
+  --line: #343331;
+  --line-strong: #575653;
+  --accent: #4385BE;
+  --accent-soft: #1A2733;
+  --high: #D14D41;
+  --medium: #D0A215;
+  --low: #878580;
+  --good: #879A39;
+  --heat0: #2A2927;
+  --heat1: #6E5A1E;
+  --heat2: #8C3B31;
+  --focus-tint: color-mix(in srgb, var(--accent) 18%, transparent);
+  --tok-comment: #6F6E69;
+  --tok-string: #879A39;
+  --tok-keyword: #8B7EC8;
+  --tok-number: #DA702C;
+  --tok-type: #4385BE;
+  --tok-fn: #3AA99F;
+  --tok-punct: #878580;
+  --tint-high: color-mix(in srgb, var(--high) 14%, transparent);
+  --tint-medium: color-mix(in srgb, var(--medium) 16%, transparent);
+  --tint-low: color-mix(in srgb, var(--low) 12%, transparent);
 }
+
 * { box-sizing: border-box; }
 /*
  * A code browser is an application, not a document: it should take the window
@@ -669,8 +704,8 @@ pre .ln { color: var(--muted); opacity: 0.6; user-select: none; display: inline-
                 font: inherit; padding: 0; text-decoration: underline; }
 .legend { display: flex; gap: 16px; align-items: center; color: var(--muted);
           font-size: var(--step--1); margin-top: 10px; flex-wrap: wrap; }
-.swatch { display: inline-block; width: 11px; height: 11px;
-          vertical-align: -1px; margin-right: 6px; border: 1px solid var(--line); }
+.swatch { display: inline-block; width: 13px; height: 13px; vertical-align: -2px;
+          margin-right: 7px; border: 1px solid var(--line-strong); }
 
 /* The three panes ---------------------------------------------------------
  *
@@ -894,8 +929,14 @@ body.is-resizing .splitter, body.is-resizing-y .splitter-h { background: var(--a
 .link-count { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
               flex: 0 0 auto; }
 
-.map-wrap { padding: 12px; }
-.legend { padding: 0 12px 12px; }
+.map-scroll { display: flex; flex-direction: column; }
+/* Natural aspect, pinned to the top: stretching a squarified treemap to fill
+   a tall pane would distort the very proportions it encodes, and centring it
+   letterboxes the map top and bottom. */
+.map-wrap { padding: 12px; flex: 0 0 auto; }
+.map-wrap svg { width: 100%; height: auto; }
+.legend { padding: 4px 14px 12px; flex: 0 0 auto; }
+.legend-note { color: var(--muted); }
 
 @media (max-width: 900px) {
   /* Stacked, and the shell stops being one screen: scroll the page instead. */
@@ -931,11 +972,18 @@ const app = document.getElementById('app');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const heatColour = (heat) => {
-  if (heat <= 0.001) return 'var(--heat0)';
-  // Opacity rather than a gradient: it reads correctly in both themes.
-  return 'color-mix(in srgb, var(--heat1) ' + Math.round(18 + heat * 82) + '%, var(--heat0))';
-};
+/*
+ * Three bands, not a gradient.
+ *
+ * A continuous scale across four hundred boxes produced four hundred shades of
+ * almost-black, and the legend promised a distinction the map never showed.
+ * Clean, some, mostly — and nothing in between to squint at.
+ */
+const SOME_FINDINGS = 0.08;
+const MOSTLY_FINDINGS = 0.35;
+
+const heatColour = (heat) =>
+  heat < SOME_FINDINGS ? 'var(--heat0)' : heat < MOSTLY_FINDINGS ? 'var(--heat1)' : 'var(--heat2)';
 
 function treemap() {
   const boxes = DATA.treemap;
@@ -944,7 +992,7 @@ function treemap() {
   const dirs = boxes.filter((b) => !b.leaf);
   const leaves = boxes.filter((b) => b.leaf);
 
-  const parts = ['<svg viewBox="0 0 ${TREEMAP_WIDTH} ${TREEMAP_HEIGHT}" role="img" aria-label="Map of the codebase by file size and findings">'];
+  const parts = ['<svg viewBox="0 0 ${TREEMAP_WIDTH} ${TREEMAP_HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Map of the codebase by file size and findings">'];
 
   for (const b of dirs) {
     parts.push('<rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h +
@@ -1715,12 +1763,13 @@ function mapPane() {
       '<span class="code-path">Every file, sized by lines, shaded by findings</span>' +
       '<span class="code-meta">click to open</span>' +
     '</div>' +
-    '<div class="pane-scroll">' +
+    '<div class="pane-scroll map-scroll">' +
       '<div class="map-wrap">' + treemap() + '</div>' +
       '<p class="legend">' +
         '<span><span class="swatch" style="background:var(--heat0)"></span>clean</span>' +
-        '<span><span class="swatch" style="background:' + heatColour(0.5) + '"></span>some findings</span>' +
-        '<span><span class="swatch" style="background:' + heatColour(1) + '"></span>mostly findings</span>' +
+        '<span><span class="swatch" style="background:var(--heat1)"></span>some findings</span>' +
+        '<span><span class="swatch" style="background:var(--heat2)"></span>mostly findings</span>' +
+        '<span class="legend-note">box size = lines of code</span>' +
       '</p>' +
     '</div>';
 }
