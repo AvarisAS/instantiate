@@ -1,341 +1,102 @@
 # instantiate
 
-See what is actually in your codebase.
+See what's actually in your codebase: dead code, duplicates, contradictions,
+unfinished work and inconsistent conventions, ranked into a worklist.
 
-LLMs write more code than anyone reads. The result is not usually broken — it is
-redundant, inconsistent, and too large to hold in a head. Three functions format
-a duration. Four modules handle errors four ways. A thousand lines are reachable
-from nothing at all, and nobody can tell which thousand.
-
-`instantiate` builds a graph of your code and turns it into a ranked worklist:
-what to delete, what to merge, what convention to settle on. The pictures are
-there to justify a finding, not to be admired.
+Runs locally. No account, no upload, no API key.
 
 ```bash
-npx instantiate scan       # index and report, ranked
-npx instantiate report     # one self-contained HTML file
-npx instantiate serve      # live UI, rebuilds on save
+npx instantiate scan      # ranked findings in the terminal
+npx instantiate report    # self-contained HTML code browser
+npx instantiate serve     # live UI, rebuilds on save
 ```
 
-No account, no upload, no API key. Everything runs locally.
+Supports **TypeScript, JavaScript, Python, Go and Swift**, in one graph.
 
 ## What it finds
 
-Indexes **TypeScript, JavaScript, Python, Go and Swift** into one graph — a polyglot repo is
-one codebase, and a per-language report hides the thing worth seeing.
+| Finding | Example |
+| --- | --- |
+| **Dead code** | Functions, classes and whole files nothing reaches |
+| **Duplicates** | `formatDuration`, `prettyTime` and `humanizeMs` doing the same job |
+| **Contradictions** | One env var defaulting to `3000` here and `8080` there |
+| **Unfinished work** | State nothing ever sets; bodies that only say `not implemented` |
+| **Drift** | The same job done several ways, e.g. async/await vs promise chains |
 
-**Dead code** — reachability from your entrypoints. Deleting is the highest-value
-and lowest-risk action in a codebase nobody understands, so it comes first. A
-file where nothing is reachable is reported once, since that is one decision.
+Each finding says what to do about it. Low-confidence findings are shown as
+questions and never count towards the headline numbers.
 
-**Semantic duplicates** — not copy-paste. `formatDuration`, `prettyTime` and
-`humanizeMs`, written weeks apart by sessions that could not find each other.
-Matched on structure *and* vocabulary, so same-shape-different-domain does not
-trigger and different-shape-same-job does.
+## The report
 
-**Contradictions** — one fact with two answers. The same environment variable
-defaulting to two values, one named timeout that is 3 seconds here and 30 there,
-dates read as UTC in one module and local time in another. Each site is
-defensible alone, which is why review never catches it.
+`instantiate report` writes one HTML file: a file tree shaded by findings, each
+file's symbols, and the source with the lines to act on highlighted. Click
+through call sites, go back and forward, and see which files connect to the one
+you're reading. File paths link to your git remote.
 
-**Unfinished work** — code that runs and does nothing yet. A variable or
-private field that conditions read and nothing ever sets, so every branch on it
-always goes the same way (a search box whose handler was deleted stays empty
-forever), and bodies that only say `not implemented` or hold a `TODO`. Abstract
-members and hooks a subclass overrides are left alone. Inline `<script>` blocks
-in HTML pages are checked too. Across 14 open-source repos it reported one
-thing, and that was real: ofetch still clears an `abortTimeout` nothing sets
-since it moved to `AbortSignal.timeout`.
+## CI
 
-**Convention drift** — error handling done four ways because four sessions each
-guessed. Invisible in any single file, obvious in aggregate.
+The check fails when the numbers **grow**, not on what's already there.
 
-**Trends** — the same numbers walked back through git history. A single scan
-saying 4% dead is a fact nobody acts on; the same number rising for six weeks is
-an argument, and a falling one is the reason to keep going.
+```bash
+npx instantiate budget    # record today's numbers → .instantiate/budget.json
+npx instantiate check     # in CI: fail if any number went up
+```
 
-**File connections** — for any file, what reaches into it and what it reaches,
-counted by distinct symbol pairs. That is the question people ask before they
-ask about a function: is this change contained, or does it touch half the
-codebase.
+## Coding agents
 
-**Linked to the repository.** When the project has a git remote, the report
-carries it under the name and every file path links to that file on the remote,
-at the line in question — so a finding in a mail attachment is one click from
-the code it is about.
-
-**A trail through the codebase.** Following a call site into another file, and
-another, is how anybody reads unfamiliar code — and how you lose your place.
-Every move is recorded: back and forward, alt and an arrow key, and a trail
-showing the path taken where each step goes back to it.
-
-**The report is a code browser.** Three panes: a file tree where each row is
-shaded by what is wrong inside it, that file's symbols with a filter, and the
-whole source with the lines to act on shaded in place and the remedy stated
-above them. Click a call site to jump to it. The treemap is tucked behind a
-toggle, which is all an overview is for.
-
-## What it does for coding agents
-
-Reporting duplicates after they are written is hygiene. Preventing them is the
-point. Register the MCP server and an agent can ask the graph before it writes:
+An MCP server lets agents check before writing a new helper:
 
 ```jsonc
 // .mcp.json
 { "mcpServers": { "instantiate": { "command": "npx", "args": ["instantiate", "mcp"] } } }
 ```
 
-| Tool | Use |
-| --- | --- |
-| `check_before_writing` | "Does anything already do this?" — before adding a helper |
-| `find_symbol` | Declaration, callers, callees — instead of grepping |
-| `blast_radius` | What breaks if I change this |
-| `list_concepts` | Orient in an unfamiliar area |
-| `list_findings` | The established convention, before picking a different one |
-| `get_intent` | Why this exists, and what it is explicitly not for |
-
-## CI: a ratchet, not a gate
-
-A repo with 4,100 dead lines today is not one anyone will clean up before
-adopting a tool. So the check fails on an **increase**, never an absolute.
-
-```bash
-npx instantiate budget   # record today's numbers, commit .instantiate/budget.json
-npx instantiate check    # fails only if they grew
-```
-
-```yaml
-- run: npx instantiate check
-```
-
-Only findings above 50% confidence count towards the budget. A low-confidence
-finding is worth showing as a question; it is not worth failing a build over.
-
-## The intent layer
-
-The half that code cannot express: *why* a thing exists and what it is **not**
-for. Without it, every agent reaching for a helper guesses, and the guess becomes
-next week's fact.
-
-```bash
-npx instantiate intent draft     # propose records for load-bearing symbols
-npx instantiate intent gaps      # what nothing explains yet
-npx instantiate intent set <symbol> "<purpose>" --not-for "<what it is not>"
-npx instantiate intent confirm <symbol>
-```
-
-Records live in `.instantiate/intent.json`. **Commit them** — they are the human
-contribution, reviewable in a PR, and the only input here that is not derived
-from the code. A draft nobody confirms is worth nothing; that is the deal.
-
-## Configuration
-
-Autodetected from `package.json` and conventions. Override only what is wrong:
-
-```yaml
-# .instantiate.yml
-entrypoints:
-  - src/index.ts
-  - src/workers/*.ts
-publicApi:
-  - packages/sdk/src/index.ts   # exports here are the contract, never "dead"
-exclude:
-  - generated/**
-dupeThreshold: 0.72             # raise if duplicates are noisy, lower to find more
-maxFindings: 20                 # the noise budget
-```
-
-### Frameworks: code nothing names
-
-A framework calls code by itself: a controller found by its decorator, a
-lifecycle hook by its name, a management command by its folder. Built-in rules
-for NestJS, Angular, TypeORM, React, Next.js, Django, Flask, FastAPI, Celery,
-pytest, Click/Typer, Pydantic and SQLAlchemy turn on when the project depends on
-that package. On sample apps they took dead-code findings from 60 to 2 (NestJS),
-13 to 0 (Django) and 9 to 0 (Flask), and both of the NestJS findings left are real.
-
-A rule is just data, so a project adds its own the same way:
-
-```yaml
-plugins:
-  - name: job-runner
-    decorators: [job]                 # @job or @scheduler.job
-    names: [handle_*]                 # functions and methods called by name
-    entrypoints: [jobs/**/*.py]       # files loaded by where they are
-    symbols: ['src/legacy.ts#boot']   # the one-off nothing else describes
-    reason: The scheduler imports jobs/ and calls handle_* by name.
-```
-
-Whatever matches is treated as used, along with everything it calls. Rules can
-only remove findings, never add them, and the scan says how many symbols each
-rule kept alive.
-
-### Ignoring a finding
-
-For a one-off that no rule describes, say so beside the code:
-
-```ts
-// instantiate-ignore dead: required by path from the deploy script
-function boot() { … }
-```
-
-```py
-# instantiate-ignore unfinished: raises on purpose until v2 ships
-def compress(data): …
-```
-
-- **A reason is required.** Without one the comment hides nothing and the scan says so.
-- **Name the kinds**: `dead`, `duplicate`, `drift`, `conflict`, `unfinished`
-  (comma-separated for several). A real duplicate on a function you've marked
-  `dead` still shows.
-- **It covers the next declaration only.** Use `exclude` for whole paths.
-- **Stale comments are reported.** Once the finding is gone, the scan asks you
-  to delete the comment.
-- **The count is a budget line.** `instantiate check` fails when the number of
-  ignores goes up, until someone runs `instantiate budget` to accept it.
-  There's no fixed quota; each new exception is just a visible decision.
-
-For code you can't or won't edit (vendored or generated files),
-`instantiate dismiss <id> "<why>"` does the same from `.instantiate/dismissed.json`.
-
-`publicApi` is the line that matters for libraries. Without it every export looks
-unreachable, the dead-code report is noise, and the tool gets uninstalled in
-minute two.
+Tools: `check_before_writing`, `find_symbol`, `blast_radius`, `list_concepts`,
+`list_findings`, `get_intent`.
 
 ## Commands
 
-| | |
+| Command | Does |
 | --- | --- |
-| `scan` | Everything, ranked |
-| `dead` / `dupes` / `conflicts` / `drift` / `unfinished` | One kind at a time |
-| `dismiss <id> <why>` | Hide a finding permanently, with a recorded reason |
-| `trend --days 90` | How the numbers moved over git history |
-| `concepts` | What this codebase is made of |
-| `why <symbol>` | Declared where, called from where, reaches what |
-| `report` / `serve` | HTML file / live UI |
-| `budget` / `check` | Record the baseline / enforce it |
-| `intent` | Draft, confirm and read intent records |
+| `scan` | All findings, ranked |
+| `dead` · `dupes` · `conflicts` · `drift` · `unfinished` | One kind |
+| `report` · `serve` | HTML file · live UI |
+| `budget` · `check` | Record the baseline · enforce it |
+| `why <symbol>` | Where it's declared, called and what it reaches |
+| `trend --days 90` | The numbers over git history |
+| `concepts` | What the codebase is made of |
+| `dismiss <id> "<why>"` | Hide a finding, with a reason |
+| `intent` | Record why a symbol exists and what it's not for |
 | `mcp` | Run as an MCP server |
 
-Add `--json` to anything.
+Add `--json` to any command, `--coverage <file>` to count what ran as used.
 
-## What it understands
+## Configuration
 
-Validated against real repositories — hono, zod, ky, zustand, ofetch, chalk and
-requests — because a tool like this is only as good as its false-positive rate.
-Two rounds of adversarial checking put dead-code precision at 0% before these
-were fixed. Each is a pattern that produced a wrong answer on real code and is
-now covered by a regression test:
+Entrypoints and public API are detected from `package.json`, `go.mod`,
+`Package.swift` and common conventions. Override only what's wrong:
 
-- code at module scope, which has no enclosing function
-- barrels — `export { x } from`, and `export *`, which names nothing
-- `import * as tags` followed by `tags[key]`, which no graph can trace
-- `this.#private()` calls
-- Node subpath imports (`#supports-color`), across every condition
-- `await import()` and `require()`
-- imports written in `.mdx`, `.vue`, `.svelte` and other files that are never
-  themselves indexed
-- monorepo workspaces, and framework route conventions inside them
-- scripts, benchmarks and examples, which are run rather than imported
-- vendored code, whose unused exports are somebody else's contract
-- constructors, which `new Foo()` never names, and abstract members, which have
-  no body to record
-- overrides, since a call through a base method runs the subclass's version
-- `declare module` augmentations, which merge into a type declared elsewhere
-- path aliases (`@/components/x`) from whichever tsconfig governs the file
-- modules that run code at load and that nothing imports, which are scripts
+```yaml
+# .instantiate.yml
+entrypoints: [src/index.ts, src/workers/*.ts]
+publicApi: [packages/sdk/src/index.ts]   # exports here are never "dead"
+exclude: [generated/**]
+```
 
-Go and Swift follow each language's own rules rather than TypeScript's:
+Framework rules (NestJS, Django, Flask, Next.js and more) turn on
+automatically. To mark a one-off as fine:
 
-- **Go:** a package is its directory, so files see each other without imports;
-  imports resolve through every `go.mod` in the repository; `init()` runs when
-  a package is loaded, including by a blank import; `x_unix.go` and
-  `x_windows.go` both define `x` and both count; interfaces are satisfied
-  implicitly, so a used type keeps its exported methods; exported names outside
-  `internal/` are a public contract. Checked on gorilla/mux, spf13/cobra and
-  charmbracelet/glow.
-- **Swift:** every file in a target shares one namespace; a type keeps what its
-  protocols require (a table covers the standard ones, `required` names the
-  repository's own), and everything non-private when it inherits from a
-  framework class whose requirements are unknown, such as `UIViewController`;
-  `override`, `@main`, `@objc`, `@IBAction` and operators are always used;
-  App Intents, widgets and previews are discovered by the system; a class named
-  in a storyboard, xib or plist may be loaded by name. Checked on onevcat/Rainbow,
-  nalexn/clean-architecture-swiftui and sindresorhus/Gifski.
+```ts
+// instantiate-ignore dead: loaded by path from the deploy script
+function boot() {}
+```
 
-Duplicate detection knows the difference between redundancy and design:
+## Docs
 
-- test suites, which repeat their scaffolding on purpose — opt in with
-  `--include-tests`
-- designed sets differing in one word: `help_option` beside `version_option`
-- one name implemented as a method by several classes, which is polymorphism
-
-- a closure and the function whose text contains it
-- stubs, which all resemble each other and implement nothing
-- pairs of wildly different size, where neither could replace the other
-- named doors onto one function — `head`, `options`, `delete`
-- one name per class, which is polymorphism
-- directories that mirror each other, learned from shared symbol names: two
-  published API surfaces over one idea are a design, not a repetition
-- translations, adapters and drivers — one name implemented once per file
-
-## Honest limits
-
-- **TypeScript, JavaScript, Python, Go and Swift.** Another language is one
-  file in `src/index/` implementing the `Backend` interface, plus a grammar in
-  `grammars/` (see `scripts/build-grammars.sh`).
-- **Python, Go and Swift resolution is weaker than TypeScript's.** There is no type checker, so
-  `obj.method()` resolves by name across every class that defines it. That
-  over-approximates on purpose (in Go, an exported method of a used type is
-  always kept, since any interface anywhere may call it): a false "alive" costs one missed finding, a false
-  "dead" costs trust in all of them.
-- **A static graph cannot see all dynamic dispatch.** It follows what it can:
-  a key whose type is a set of string literals (`this[verb]()` with
-  `verb: 'get' | 'post'`) reaches exactly those members, a computed import with
-  a fixed prefix (`` import(`./locales/${lang}`) ``) reaches every file the prefix
-  could complete to, and in Python `getattr(obj, "name")` and
-  `import_module(f"app.plugins.{x}")` resolve the same way.
-
-  The rest (`handlers[kind]()`, `require(variable)`, `getattr(obj, name)`,
-  `eval`) is listed by file and line in the scan output, so you can see exactly
-  where the analysis stops. A symbol whose name appears in a string or in a
-  config file (YAML, JSON, TOML and similar) is reported as *may be loaded by
-  name*, not as dead, and doesn't count towards the headline number.
-
-  To settle the rest, give it a real run. Pass a coverage report and anything
-  that executed counts as reached, however it was reached:
-
-  ```bash
-  npx vitest --coverage           # or: coverage run -m pytest && coverage json
-  npx instantiate scan --coverage coverage/coverage-final.json
-  ```
-
-  Istanbul (nyc, c8, Vitest, Jest), `coverage.py` and raw V8 traces are all
-  understood, and `--coverage` can be repeated. A production trace catches
-  paths no test tried: run the service with `NODE_V8_COVERAGE=traces/` and pass
-  that folder. That works for plain JavaScript; for TypeScript, convert the
-  trace first with `npx c8 report --temp-directory traces --reporter=json`.
-  Whatever is left is unreachable *and* never ran, which is stronger than either
-  on its own, so it's reported at 97% confidence rather than the usual 70%.
-- **Parallel sets are demoted, not understood.** Sixty translations are
-  recognised as structure rather than redundancy by their shape — one name per
-  file — not because the tool knows what a translation is.
-- **Duplicates need shared vocabulary.** Two functions with identical structure
-  and every noun renamed score too low to report, because nothing short of
-  semantic embeddings separates that from a coincidental shape match.
-- **Duplicate precision is 0.75 against hand-labelled pairs**, with recall 0.86
-  — measured, not asserted: `npm run calibrate` re-runs it. The confidence score
-  is calibrated so the bands descend (0.80 above 0.70, 0.67 in the middle, 0.17
-  below), which is what makes ranking worth reading. It is a similarity
-  detector, not a semantic one, and two functions that share a parameter list
-  while doing different work can still slip through.
-- **Contradictions are narrow on purpose.** An environment variable with two
-  fallbacks, a declared constant with two values, UTC against local time. A
-  `maxAge` of 600 in one feature and 3600 in another is two settings, not a
-  disagreement, and reporting it would make the whole category untrustworthy.
-- **It does not judge whether code is good.** That is out of reach, and attempting
-  it would make this a linter with worse ergonomics.
-- **Intent records are only as true as the human who confirmed them.**
+- [Configuration](docs/configuration.md): config file, framework rules, ignoring findings
+- [Dynamic code](docs/dynamic-code.md): what static analysis can't see, and coverage/traces
+- [Languages](docs/languages.md): how each language is read, and adding one
+- [Accuracy](docs/accuracy.md): how it's validated, and known limits
 
 ## Licence
 
