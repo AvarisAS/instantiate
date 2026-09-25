@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { relative, isAbsolute, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { relative, isAbsolute, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { UserError } from '../errors.js';
 
 /**
@@ -16,9 +17,14 @@ import { UserError } from '../errors.js';
  * unreachable is unreachable *and* untested, which is a stronger finding than
  * either on its own.
  *
- * Two formats, covering most of what exists:
+ * Three formats, covering most of what exists:
  *   - Istanbul / nyc / c8 / Vitest / Jest `coverage-final.json`
  *   - coverage.py `coverage json` output
+ *   - raw V8 coverage: the directory `NODE_V8_COVERAGE` writes to
+ *
+ * The last is what makes a production trace cheap: run the real service for a
+ * while with `NODE_V8_COVERAGE=dir`, and whatever users exercised counts too —
+ * including every path the test suite never thought to try.
  */
 
 export interface Coverage {
@@ -28,7 +34,28 @@ export interface Coverage {
   files: number;
 }
 
+/** Several reports — a test run and a production trace, say — read as one. */
+export function readCoverages(root: string, paths: string[]): Coverage {
+  const all = paths.map((path) => readCoverage(root, path));
+  if (all.length === 1) return all[0];
+  const executed = new Map<string, Set<number>>();
+  for (const coverage of all) {
+    for (const [file, lines] of coverage.executed) {
+      const merged = executed.get(file) ?? new Set<number>();
+      for (const line of lines) merged.add(line);
+      executed.set(file, merged);
+    }
+  }
+  return { executed, format: [...new Set(all.map((c) => c.format))].join(' + '), files: executed.size };
+}
+
 export function readCoverage(root: string, path: string): Coverage {
+  if (existsSync(path) && statSync(path).isDirectory()) {
+    const reports = readdirSync(path).filter((name) => name.endsWith('.json'));
+    if (reports.length === 0) throw new UserError(`${path} is a directory with no coverage files in it.`);
+    return fromV8(root, reports.map((name) => JSON.parse(readFileSync(join(path, name), 'utf8'))));
+  }
+
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
@@ -43,6 +70,7 @@ export function readCoverage(root: string, path: string): Coverage {
   }
 
   const record = raw as Record<string, unknown>;
+  if (Array.isArray(record.result)) return fromV8(root, [record]);
   const pythonFiles = record.files;
   if (pythonFiles && typeof pythonFiles === 'object') {
     return fromCoveragePy(root, pythonFiles as Record<string, unknown>);
@@ -96,6 +124,85 @@ function fromIstanbul(root: string, report: Record<string, unknown>): Coverage {
   return { executed, format: 'istanbul', files: executed.size };
 }
 
+interface V8Range {
+  startOffset: number;
+  endOffset: number;
+  count: number;
+}
+
+/**
+ * V8's own format: byte ranges per function, each with an execution count,
+ * where an inner range overrides the one around it.
+ *
+ * Offsets refer to the code V8 ran. For plain JavaScript that is the file on
+ * disk; for TypeScript it is a transpiled copy whose offsets mean nothing
+ * here, so those are left out — `c8 report --reporter=json` maps them through
+ * source maps into an Istanbul report, which this already reads.
+ */
+function fromV8(root: string, reports: unknown[]): Coverage {
+  const executed = new Map<string, Set<number>>();
+  for (const report of reports) {
+    const result = (report as { result?: Array<{ url?: string; functions?: Array<{ ranges?: V8Range[] }> }> }).result;
+    for (const script of result ?? []) {
+      if (!script.url?.startsWith('file://')) continue;
+      const absolute = fileURLToPath(script.url);
+      if (!/\.[cm]?jsx?$/.test(absolute) || absolute.includes('/node_modules/')) continue;
+      const file = normalise(root, absolute);
+      if (file.startsWith('..')) continue;
+
+      let text: string;
+      try {
+        text = readFileSync(absolute, 'utf8');
+      } catch {
+        continue;
+      }
+      // Line start offsets, so a byte range becomes the lines it covers.
+      const starts = [0];
+      for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
+      const ranges = (script.functions ?? []).flatMap((fn) => fn.ranges ?? []);
+      // Widest first, so a nested range paints over its parent.
+      ranges.sort((a, b) => b.endOffset - b.startOffset - (a.endOffset - a.startOffset));
+
+      const ran = new Map<number, boolean>();
+      for (const range of ranges) {
+        for (let line = lineAt(starts, range.startOffset); line < starts.length; line++) {
+          const start = starts[line];
+          if (start >= range.endOffset) break;
+          const end = (starts[line + 1] ?? text.length + 1) - 1;
+          if (end < range.startOffset || start >= range.endOffset) continue;
+          // A line only partly inside a never-run range may still have run the
+          // rest, so only a line wholly inside one is marked as not run.
+          const whole = start >= range.startOffset && end <= range.endOffset;
+          if (range.count > 0) ran.set(line + 1, true);
+          else if (whole) ran.set(line + 1, false);
+        }
+      }
+      const lines = executed.get(file) ?? new Set<number>();
+      for (const [line, yes] of ran) if (yes) lines.add(line);
+      executed.set(file, lines);
+    }
+  }
+  if (executed.size === 0) {
+    throw new UserError(
+      'That V8 coverage held no JavaScript files from this project. For TypeScript, convert it first: ' +
+        '`npx c8 report --temp-directory <dir> --reporter=json`, then pass coverage/coverage-final.json.',
+    );
+  }
+  return { executed, format: 'v8', files: executed.size };
+}
+
+/** Zero-based line containing an offset. */
+function lineAt(starts: number[], offset: number): number {
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (starts[mid] <= offset) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+}
+
 /**
  * Coverage tools emit absolute paths, or paths relative to wherever they ran.
  *
@@ -113,5 +220,15 @@ function normalise(root: string, file: string): string {
   } else {
     absolute = resolve(process.cwd(), file);
   }
-  return relative(root, absolute).split('\\').join('/');
+  // Through symlinks on both sides: macOS reports /private/var for /var, and
+  // a mismatch would make every file look like it lives outside the project.
+  return relative(real(root), real(absolute)).split('\\').join('/');
+}
+
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }

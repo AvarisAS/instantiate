@@ -38,6 +38,15 @@ defaulting to two values, one named timeout that is 3 seconds here and 30 there,
 dates read as UTC in one module and local time in another. Each site is
 defensible alone, which is why review never catches it.
 
+**Unfinished work** — code that runs and does nothing yet. A variable or
+private field that conditions read and nothing ever sets, so every branch on it
+always goes the same way (a search box whose handler was deleted stays empty
+forever), and bodies that only say `not implemented` or hold a `TODO`. Abstract
+members and hooks a subclass overrides are left alone. Inline `<script>` blocks
+in HTML pages are checked too. Across 14 open-source repos it reported one
+thing, and that was real: ofetch still clears an `abortTimeout` nothing sets
+since it moved to `AbortSignal.timeout`.
+
 **Convention drift** — error handling done four ways because four sessions each
 guessed. Invisible in any single file, obvious in aggregate.
 
@@ -136,6 +145,31 @@ dupeThreshold: 0.72             # raise if duplicates are noisy, lower to find m
 maxFindings: 20                 # the noise budget
 ```
 
+### Frameworks: code nothing names
+
+A framework calls code by itself: a controller found by its decorator, a
+lifecycle hook by its name, a management command by its folder. Built-in rules
+for NestJS, Angular, TypeORM, React, Next.js, Django, Flask, FastAPI, Celery,
+pytest, Click/Typer, Pydantic and SQLAlchemy turn on when the project depends on
+that package. On sample apps they took dead-code findings from 60 to 2 (NestJS),
+13 to 0 (Django) and 9 to 0 (Flask), and both of the NestJS findings left are real.
+
+A rule is just data, so a project adds its own the same way:
+
+```yaml
+plugins:
+  - name: job-runner
+    decorators: [job]                 # @job or @scheduler.job
+    names: [handle_*]                 # functions and methods called by name
+    entrypoints: [jobs/**/*.py]       # files loaded by where they are
+    symbols: ['src/legacy.ts#boot']   # the one-off nothing else describes
+    reason: The scheduler imports jobs/ and calls handle_* by name.
+```
+
+Whatever matches is treated as used, along with everything it calls. Rules can
+only remove findings, never add them, and the scan says how many symbols each
+rule kept alive.
+
 `publicApi` is the line that matters for libraries. Without it every export looks
 unreachable, the dead-code report is noise, and the tool gets uninstalled in
 minute two.
@@ -145,7 +179,7 @@ minute two.
 | | |
 | --- | --- |
 | `scan` | Everything, ranked |
-| `dead` / `dupes` / `conflicts` / `drift` | One kind at a time |
+| `dead` / `dupes` / `conflicts` / `drift` / `unfinished` | One kind at a time |
 | `dismiss <id> <why>` | Hide a finding permanently, with a recorded reason |
 | `trend --days 90` | How the numbers moved over git history |
 | `concepts` | What this codebase is made of |
@@ -206,23 +240,34 @@ Duplicate detection knows the difference between redundancy and design:
   `obj.method()` resolves by name across every class that defines it. That
   over-approximates on purpose: a false "alive" costs one missed finding, a false
   "dead" costs trust in all of them.
-- **A static graph cannot see dynamic dispatch.** String-keyed containers, routes
-  built at runtime, `require(variable)`. Names that appear in string literals are
-  downgraded rather than reported confidently, but a graph will still be wrong
-  where a codebase is most confusing. Low confidence means *question*, not fact.
+- **A static graph cannot see all dynamic dispatch.** It follows what it can:
+  a key whose type is a set of string literals (`this[verb]()` with
+  `verb: 'get' | 'post'`) reaches exactly those members, a computed import with
+  a fixed prefix (`` import(`./locales/${lang}`) ``) reaches every file the prefix
+  could complete to, and in Python `getattr(obj, "name")` and
+  `import_module(f"app.plugins.{x}")` resolve the same way.
 
-  The answer to that is not more static analysis — it is a test run. Pass a
-  coverage report and anything the tests executed counts as reached, however it
-  was reached:
+  The rest (`handlers[kind]()`, `require(variable)`, `getattr(obj, name)`,
+  `eval`) is listed by file and line in the scan output, so you can see exactly
+  where the analysis stops. A symbol whose name appears in a string or in a
+  config file (YAML, JSON, TOML and similar) is reported as *may be loaded by
+  name*, not as dead, and doesn't count towards the headline number.
+
+  To settle the rest, give it a real run. Pass a coverage report and anything
+  that executed counts as reached, however it was reached:
 
   ```bash
   npx vitest --coverage           # or: coverage run -m pytest && coverage json
   npx instantiate scan --coverage coverage/coverage-final.json
   ```
 
-  Istanbul (nyc, c8, Vitest, Jest) and `coverage.py` are both understood. What
-  is left is unreachable *and* untested, which is a stronger finding than
-  either alone — such findings are reported at 97% rather than the usual 70%.
+  Istanbul (nyc, c8, Vitest, Jest), `coverage.py` and raw V8 traces are all
+  understood, and `--coverage` can be repeated. A production trace catches
+  paths no test tried: run the service with `NODE_V8_COVERAGE=traces/` and pass
+  that folder. That works for plain JavaScript; for TypeScript, convert the
+  trace first with `npx c8 report --temp-directory traces --reporter=json`.
+  Whatever is left is unreachable *and* never ran, which is stronger than either
+  on its own, so it's reported at 97% confidence rather than the usual 70%.
 - **Parallel sets are demoted, not understood.** Sixty translations are
   recognised as structure rather than redundancy by their shape — one name per
   file — not because the tool knows what a translation is.

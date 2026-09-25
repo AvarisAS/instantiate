@@ -1,0 +1,4 @@
+plugins:
+  - name: legacy-loader
+    symbols: ['src/legacy.ts#loadedByTheOldShell']
+    reason: The old shell script requires this by path.

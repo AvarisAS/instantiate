@@ -1,0 +1,3 @@
+schedule:
+  - job: NightlyInvoiceJob
+    cron: "0 3 * * *"

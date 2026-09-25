@@ -20,6 +20,7 @@ export interface SymbolInput {
   body: string;
   signature: string;
   ambient?: boolean;
+  decorators?: string[];
 }
 
 export function symbolId(file: string, name: string, container?: string): string {
@@ -54,6 +55,7 @@ export function record(
     endLine: input.endLine,
     exported: input.exported,
     ambient: input.ambient,
+    ...(input.decorators?.length ? { decorators: input.decorators } : {}),
     loc: input.endLine - input.line + 1,
     body: input.body,
     signature: input.signature,

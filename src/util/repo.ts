@@ -32,13 +32,6 @@ export function detectRepo(root: string): Repo | undefined {
   return { url, ref, blobPath: url.includes('bitbucket.org') ? 'src' : 'blob' };
 }
 
-/** A file's line in the remote, or nothing when the host is not one we know. */
-export function fileUrl(repo: Repo, path: string, line?: number): string | undefined {
-  if (!/github\.com|gitlab\.com|bitbucket\.org/.test(repo.url)) return undefined;
-  const at = line && line > 1 ? `#L${line}` : '';
-  return `${repo.url}/${repo.blobPath}/${repo.ref}/${path}${at}`;
-}
-
 function git(root: string, args: string[]): string | undefined {
   try {
     return execFileSync('git', args, {

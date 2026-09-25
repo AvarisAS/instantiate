@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import YAML from 'yaml';
+import { activePlugins, pluginEntrypoints, type Plugin } from './plugins.js';
 
 export interface Config {
   root: string;
@@ -30,9 +31,15 @@ export interface Config {
   maxFindings: number;
   /** Target number of concept clusters on the map. */
   concepts: number;
+  /**
+   * Framework conventions in force: the built-ins whose package this project
+   * depends on, then the project's own. In `.instantiate.yml` this lists only
+   * the project's own; the built-ins are added on load.
+   */
+  plugins: Plugin[];
 }
 
-const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi'> = {
+const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi' | 'plugins'> = {
   include: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mts', '**/*.cts'],
   exclude: [
     '**/node_modules/**',
@@ -145,7 +152,7 @@ const SCRIPT_DIRS = [
 ];
 
 /** Workspace package directories, from `workspaces` or the usual layout. */
-function workspaceDirs(root: string): string[] {
+export function workspaceDirs(root: string): string[] {
   const dirs = new Set<string>();
   const patterns: string[] = [];
 
@@ -288,11 +295,15 @@ export function loadConfig(root: string): Config {
     }
   }
 
+  const plugins = activePlugins(root, fileConfig.plugins ?? []);
+  const entrypoints = fileConfig.entrypoints ?? detected.entrypoints;
+
   return {
     ...DEFAULTS,
-    entrypoints: detected.entrypoints,
     publicApi: detected.publicApi,
     ...fileConfig,
+    entrypoints: unique([...entrypoints, ...pluginEntrypoints(plugins)]),
+    plugins,
     // Explicit excludes add to the defaults rather than replacing them; dropping
     // node_modules from a hand-written list is a footgun nobody needs.
     exclude: [...DEFAULTS.exclude, ...(fileConfig.exclude ?? [])],
@@ -306,6 +317,7 @@ export function describeConfig(config: Config): string {
     `entrypoints  ${config.entrypoints.length ? config.entrypoints.join(', ') : '(none detected)'}`,
     `public api   ${config.publicApi.length ? config.publicApi.join(', ') : '(none)'}`,
     `dupe cutoff  ${config.dupeThreshold}`,
+    `plugins      ${config.plugins.length ? config.plugins.map((p) => p.name).join(', ') : '(none)'}`,
   ];
   return lines.join('\n');
 }

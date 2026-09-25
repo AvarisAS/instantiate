@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<body>
+<input id="filter">
+<script type="application/json" id="data">{ "let": "not code" }</script>
+<script>
+  let filterText = '';
+  function rows(all) {
+    if (filterText) return all.filter((r) => r.includes(filterText));
+    return all;
+  }
+  window.rows = rows;
+</script>
+</body>
+</html>

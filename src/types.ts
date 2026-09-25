@@ -32,6 +32,12 @@ export interface CodeSymbol {
    * it: a script, a benchmark, a migration, a CLI entry.
    */
   sideEffects?: boolean;
+  /**
+   * Decorators applied to it, as written minus arguments: `Injectable`,
+   * `app.route`. A decorator is how most frameworks register code they will
+   * later call by themselves, so it is the strongest hint of dynamic dispatch.
+   */
+  decorators?: string[];
   /** Reachable from an entrypoint or public API surface. */
   loc: number;
   /** Normalised source used for duplicate detection. */
@@ -75,10 +81,28 @@ export interface CodeGraph {
   edges: Edge[];
   files: Map<string, FileRecord>;
   entrypoints: string[];
+  /** Places that reach code by a name computed at run time, which no static graph follows. */
+  dynamicSites: DynamicSite[];
   createdAt: number;
 }
 
-export type FindingKind = 'dead' | 'duplicate' | 'drift' | 'contradiction' | 'orphan-file';
+/**
+ * `handlers[type]()`, `import(\`./locales/${lang}\`)`, `getattr(obj, name)`.
+ *
+ * Kept rather than discarded because it is the honest boundary of the
+ * analysis: an unreachable symbol near one of these is a question, not a
+ * finding, and the list says exactly where a plugin rule or a coverage report
+ * would settle it.
+ */
+export interface DynamicSite {
+  file: string;
+  line: number;
+  kind: 'import' | 'member' | 'reflection';
+  /** The expression, trimmed, as written. */
+  text: string;
+}
+
+export type FindingKind = 'dead' | 'duplicate' | 'drift' | 'contradiction' | 'orphan-file' | 'unfinished';
 
 export type Severity = 'high' | 'medium' | 'low';
 
@@ -134,6 +158,7 @@ export interface Budget {
   duplicate: number;
   drift: number;
   contradiction: number;
+  unfinished?: number;
   createdAt: number;
 }
 
@@ -159,6 +184,8 @@ export interface Stats {
   duplicateLoc: number;
   driftCount: number;
   contradictionCount: number;
+  /** State nothing sets and bodies that only say they are not written yet. */
+  unfinishedCount: number;
   indexMs: number;
   analyseMs: number;
 }

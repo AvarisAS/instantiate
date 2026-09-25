@@ -17,6 +17,7 @@ ${bold('instantiate')} — see what is actually in your codebase
   ${bold('dupes')}                symbols that do the same job
   ${bold('drift')}                conventions done more than one way
   ${bold('conflicts')}            one fact with two different answers
+  ${bold('unfinished')}           state nothing sets, bodies that are only a TODO
   ${bold('concepts')}             what this codebase is made of
   ${bold('trend')} [--days n]     how the numbers moved over git history
   ${bold('why')} <symbol>         where a symbol is declared, called and used
@@ -36,7 +37,7 @@ ${bold('instantiate')} — see what is actually in your codebase
   ${dim('--json           machine-readable output')}
   ${dim('--all            ignore dismissals')}
   ${dim('--include-tests  look for duplicates inside test files too')}
-  ${dim('--coverage <f>   merge a coverage report, so dynamically reached code counts')}
+  ${dim('--coverage <f>   merge a coverage report or V8 trace dir (repeatable), so dynamically reached code counts')}
 `;
 
 interface Args {
@@ -48,7 +49,7 @@ interface Args {
   all: boolean;
   includeTests: boolean;
   out?: string;
-  coverage?: string;
+  coverage?: string[];
   port: number;
   days: number;
   points: number;
@@ -73,7 +74,7 @@ function parseArgs(argv: string[]): Args {
     if (arg === '--root') args.root = resolve(argv[++i] ?? '.');
     else if (arg === '--limit') args.limit = Number(argv[++i]);
     else if (arg === '--out') args.out = argv[++i];
-    else if (arg === '--coverage') args.coverage = argv[++i];
+    else if (arg === '--coverage') (args.coverage ??= []).push(argv[++i]);
     else if (arg === '--port') args.port = Number(argv[++i]);
     else if (arg === '--days') args.days = Number(argv[++i]);
     else if (arg === '--points') args.points = Number(argv[++i]);
@@ -124,7 +125,7 @@ async function main(): Promise<number> {
 
   const config = loadConfigFor(args);
   const coverage = args.coverage
-    ? (await import('./analysis/coverage.js')).readCoverage(args.root, args.coverage)
+    ? (await import('./analysis/coverage.js')).readCoverages(args.root, args.coverage)
     : undefined;
   const result = await scan({ root: args.root, config, coverage });
   const all = visible(result.findings, args);
@@ -145,7 +146,8 @@ async function main(): Promise<number> {
     case 'dead':
     case 'dupes':
     case 'drift':
-    case 'conflicts': {
+    case 'conflicts':
+    case 'unfinished': {
       const kind =
         args.command === 'dupes'
           ? 'duplicate'

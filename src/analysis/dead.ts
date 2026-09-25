@@ -2,6 +2,10 @@ import type { CodeGraph, Finding, CodeSymbol } from '../types.js';
 import type { Config } from '../config.js';
 import { matchesAny } from '../util/glob.js';
 import type { Coverage } from './coverage.js';
+import { rootingPlugin } from '../plugins.js';
+import { discoverFiles } from '../index/extract.js';
+import { readFileSync, statSync } from 'node:fs';
+import { relPath } from '../config.js';
 
 /** Findings below this confidence are shown, but do not count towards the budget. */
 const METRIC_CONFIDENCE_FLOOR = 0.5;
@@ -12,6 +16,8 @@ export interface DeadResult {
   deadLoc: number;
   /** True when no entrypoint matched a real file, so the result means nothing. */
   noEntrypoints: boolean;
+  /** Symbols each framework plugin kept alive, so its effect is visible, not silent. */
+  pluginRoots: Map<string, number>;
 }
 
 /**
@@ -40,6 +46,17 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
     else if (entryFiles.includes(symbol.file)) roots.add(symbol.id);
     // A published export is the package's contract; absent callers are the point.
     else if (apiFiles.includes(symbol.file) && symbol.exported) roots.add(symbol.id);
+  }
+
+  // What a framework calls by itself: a decorated controller, a lifecycle hook.
+  const pluginRoots = new Map<string, number>();
+  for (const symbol of graph.symbols.values()) {
+    const plugin = rootingPlugin(symbol, config.plugins ?? []);
+    if (!plugin) continue;
+    roots.add(symbol.id);
+    // The framework imported the file to find it, so the file's top level ran.
+    roots.add(`${symbol.file}#<module>`);
+    pluginRoots.set(plugin.name, (pluginRoots.get(plugin.name) ?? 0) + 1);
   }
 
   // A module nothing imports, which nevertheless runs code when loaded, is a
@@ -124,17 +141,26 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
 
   const noEntrypoints = entryFiles.length === 0 && apiFiles.length === 0;
   if (noEntrypoints) {
-    return { findings: [], reachable, deadLoc: 0, noEntrypoints: true };
+    return { findings: [], reachable, deadLoc: 0, noEntrypoints: true, pluginRoots };
   }
 
   const dynamicNames = collectDynamicNames(graph);
+  const dataNames = collectDataNames(config);
   const findings: Finding[] = [];
   let deadLoc = 0;
 
   // A file with nothing reachable in it is one decision — delete the file —
   // not one row per symbol. zod's top twenty findings were two orphaned files
   // between them, which pushed every independent finding out of view.
-  const orphanFiles = findOrphanFiles(graph, reachable);
+  //
+  // Unless something may load one of them by name: then it is a question per
+  // symbol, and rolling it up would state it as a verdict.
+  // A member of a class a config file names goes wherever its class goes.
+  // Not so for a class named in a string literal: `typeName: "ZodString"` is
+  // everywhere, and says nothing about who calls ZodString's members.
+  const nameIsData = (s: CodeSymbol): boolean =>
+    dynamicNames.has(s.name) || s.id.split('#')[1].split('.').some((name) => dataNames.has(name));
+  const orphanFiles = findOrphanFiles(graph, reachable, coverage ? () => false : nameIsData);
 
   for (const file of orphanFiles) {
     const symbols = [...graph.symbols.values()].filter(
@@ -171,7 +197,12 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
     // "never reached" stops being a guess about dynamic dispatch and becomes an
     // observation. The usual hedges no longer apply.
     const covered = !!coverage && coverage.executed.has(symbol.file);
-    const score = covered ? 0.97 : confidence(symbol, dynamicNames);
+    const dataFile = symbol.id.split('#')[1].split('.').map((n) => dataNames.get(n)).find(Boolean);
+    // Its name is written down somewhere as data: something may look it up by
+    // that name. That is a question for a human, not a verdict, and it is
+    // reported as one rather than as a lower-confidence "dead".
+    const unknown = !covered && nameIsData(symbol);
+    const score = covered ? 0.97 : unknown ? Math.min(0.45, confidence(symbol, dynamicNames)) : confidence(symbol, dynamicNames);
     // Same rule as duplicates: the headline number, and therefore the CI budget,
     // only counts what we would stand behind.
     if (score >= METRIC_CONFIDENCE_FLOOR) deadLoc += symbol.loc;
@@ -179,15 +210,17 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
       id: `dead:${symbol.id}`,
       kind: 'dead',
       severity: symbol.loc >= 40 ? 'high' : symbol.loc >= 10 ? 'medium' : 'low',
-      title: `${symbol.name} is never reached`,
+      title: unknown ? `${symbol.name} may be loaded by name` : `${symbol.name} is never reached`,
       detail:
-        buildDetail(symbol, dynamicNames) +
+        buildDetail(symbol, dynamicNames, dataFile) +
         (covered
           ? ' A coverage report was supplied and no test executed it, so it is not reached dynamically either.'
           : ''),
-      action: symbol.exported
-        ? `Delete ${symbol.name}, unless something outside this codebase imports it — check before removing an export.`
-        : `Delete ${symbol.name}. Nothing inside this codebase can reach it.`,
+      action: unknown
+        ? `Check whether ${symbol.name} is looked up by name. If it is, add a plugin rule in .instantiate.yml so it counts as used; if not, delete it.`
+        : symbol.exported
+          ? `Delete ${symbol.name}, unless something outside this codebase imports it — check before removing an export.`
+          : `Delete ${symbol.name}. Nothing inside this codebase can reach it.`,
       file: symbol.file,
       line: symbol.line,
       symbols: [symbol.id],
@@ -196,14 +229,16 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
       evidence: {
         kind: symbol.kind,
         exported: symbol.exported,
+        verdict: unknown ? 'unknown' : 'dead',
         nameAppearsInString: dynamicNames.has(symbol.name),
+        ...(dataFile ? { nameAppearsIn: dataFile } : {}),
       },
     });
   }
 
   // Biggest and most certain first: that is the order a human should delete in.
   findings.sort((a, b) => b.score * b.loc - a.score * a.loc);
-  return { findings, reachable, deadLoc, noEntrypoints: false };
+  return { findings, reachable, deadLoc, noEntrypoints: false, pluginRoots };
 }
 
 /**
@@ -213,7 +248,11 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
  * imported for its side effects is not an orphan, and a file nobody imports
  * but whose symbols are reached some other way is not one either.
  */
-function findOrphanFiles(graph: CodeGraph, reachable: Set<string>): Set<string> {
+function findOrphanFiles(
+  graph: CodeGraph,
+  reachable: Set<string>,
+  uncertain: (symbol: CodeSymbol) => boolean,
+): Set<string> {
   const importedFiles = new Set(
     graph.edges
       .filter((e) => e.kind === 'imports')
@@ -228,7 +267,7 @@ function findOrphanFiles(graph: CodeGraph, reachable: Set<string>): Set<string> 
     );
     // A file with one symbol is clearer reported as that symbol.
     if (symbols.length < 2) continue;
-    if (symbols.every((s) => !reachable.has(s.id))) orphans.add(file);
+    if (symbols.every((s) => !reachable.has(s.id)) && !symbols.some(uncertain)) orphans.add(file);
   }
   return orphans;
 }
@@ -249,6 +288,39 @@ function collectDynamicNames(graph: CodeGraph): Set<string> {
   return names;
 }
 
+/** Data formats a framework or container reads names from. */
+const DATA_FILES = ['**/*.{json,yml,yaml,toml,ini,cfg,xml,properties}'];
+const NOT_DATA = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|composer\.lock|tsconfig[^/]*\.json|coverage-final\.json)$/;
+
+/**
+ * Identifiers written in configuration and data files, with the first file
+ * each was seen in.
+ *
+ * A DI container, a plugin loader or a job scheduler usually names what it
+ * loads in a YAML or JSON file, which the source never mentions. Only names
+ * that look like code — a capital or an underscore somewhere after the start,
+ * four characters or more — count, so `name` and `version` do not hedge every
+ * symbol that shares a common word.
+ */
+function collectDataNames(config: Config): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const absolute of discoverFiles(config, DATA_FILES)) {
+    const file = relPath(config.root, absolute);
+    if (NOT_DATA.test(file)) continue;
+    try {
+      if (statSync(absolute).size > 256 * 1024) continue;
+      const text = readFileSync(absolute, 'utf8');
+      for (const [word] of text.matchAll(/[A-Za-z_$][\w$]{3,}/g)) {
+        if (!/.[A-Z_]/.test(word) || names.has(word)) continue;
+        names.set(word, file);
+      }
+    } catch {
+      // Unreadable: nothing to learn from it.
+    }
+  }
+  return names;
+}
+
 function confidence(symbol: CodeSymbol, dynamicNames: Set<string>): number {
   let score = 0.95;
   // An export may have a consumer this repo cannot see.
@@ -262,13 +334,16 @@ function confidence(symbol: CodeSymbol, dynamicNames: Set<string>): number {
   return Math.max(0.05, Math.round(score * 100) / 100);
 }
 
-function buildDetail(symbol: CodeSymbol, dynamicNames: Set<string>): string {
+function buildDetail(symbol: CodeSymbol, dynamicNames: Set<string>, dataFile?: string): string {
   const parts = [`No path reaches this ${symbol.kind} from any entrypoint.`];
   if (symbol.exported) {
     parts.push('It is exported, so a consumer outside this repo may still use it.');
   }
   if (dynamicNames.has(symbol.name)) {
     parts.push(`The name "${symbol.name}" also appears in a string literal, so it may be reached dynamically.`);
+  }
+  if (dataFile) {
+    parts.push(`The name "${symbol.name}" appears in ${dataFile}, so something may load it by name.`);
   }
   return parts.join(' ');
 }

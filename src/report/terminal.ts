@@ -20,11 +20,12 @@ export function renderSummary(stats: Stats, warnings: string[], shown = 0): stri
     ['duplicate', stats.duplicateLoc, `${stats.duplicateLoc} lines of redundant re-implementation`],
     ['drift', stats.driftCount, `${plural(stats.driftCount, 'convention')} done more than one way`],
     ['conflict', stats.contradictionCount, `${plural(stats.contradictionCount, 'value')} stated two different ways`],
+    ['unfinished', stats.unfinishedCount, `${plural(stats.unfinishedCount, 'thing')} started and never finished`],
   ];
 
   for (const [label, value, description] of rows) {
     const share =
-      label === 'drift' || label === 'conflict'
+      label === 'drift' || label === 'conflict' || label === 'unfinished'
         ? Math.min(value / 5, 1)
         : value / Math.max(stats.loc, 1);
     lines.push(`  ${label.padEnd(10)} ${bar(share, 16)} ${description}`);
@@ -36,7 +37,8 @@ export function renderSummary(stats: Stats, warnings: string[], shown = 0): stri
     lines.push(`  ${bold('load-bearing')}  ${(clean * 100).toFixed(1)}% of ${stats.loc} lines`);
   }
 
-  const counted = stats.deadLoc + stats.duplicateLoc + stats.driftCount + stats.contradictionCount;
+  const counted =
+    stats.deadLoc + stats.duplicateLoc + stats.driftCount + stats.contradictionCount + stats.unfinishedCount;
   if (shown > 0 && counted === 0) {
     lines.push('');
     lines.push(
@@ -77,7 +79,12 @@ export function renderFindings(findings: Finding[], limit: number, kind?: string
     const colour = severityColour(finding.severity);
     const rank = dim(String(i + 1).padStart(2));
     lines.push(`${rank} ${colour(finding.severity.padEnd(6))} ${bold(finding.title)}`);
-    const unit = finding.kind === 'contradiction' ? plural(finding.loc, 'site') : `${finding.loc} lines`;
+    const unit =
+      finding.kind === 'contradiction'
+        ? plural(finding.loc, 'site')
+        : finding.kind === 'unfinished' && finding.id.endsWith('@unset')
+          ? plural(finding.loc, 'frozen branch', 'frozen branches')
+          : `${finding.loc} lines`;
     lines.push(`   ${cyan(`${finding.file}:${finding.line}`)} ${dim(`· ${unit} · ${Math.round(finding.score * 100)}% confidence`)}`);
     lines.push(`   ${dim(finding.detail)}`);
     lines.push('');

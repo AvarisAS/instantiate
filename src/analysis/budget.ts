@@ -30,6 +30,7 @@ export function writeBudget(root: string, stats: Stats): Budget {
     duplicate: stats.duplicateLoc,
     drift: stats.driftCount,
     contradiction: stats.contradictionCount,
+    unfinished: stats.unfinishedCount,
     createdAt: Date.now(),
   };
   mkdirSync(join(root, '.instantiate'), { recursive: true });
@@ -50,6 +51,7 @@ export function checkBudget(budget: Budget, stats: Stats): BudgetCheck {
     // An older budget file predates this metric; treat it as "none allowed"
     // only once it has been recorded, never as an accidental instant failure.
     ['contradictions', stats.contradictionCount, budget.contradiction ?? stats.contradictionCount],
+    ['unfinished', stats.unfinishedCount, budget.unfinished ?? stats.unfinishedCount],
   ];
 
   const lines: string[] = [];

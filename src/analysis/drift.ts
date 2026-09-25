@@ -24,15 +24,27 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  // Raising a failure and absorbing one are different jobs, so they are
+  // different categories. Compared as one, `throw new UserError` at a boundary
+  // and `catch {}` around an optional file looked like a codebase that could
+  // not decide, when each was the only right answer where it stood.
   {
     key: 'errors',
-    label: 'error handling',
+    label: 'reporting failure',
     minUses: 6,
     dialects: [
       { name: 'throw Error', test: /\bthrow\s+new\s+\w*Error\b/ },
       { name: 'result object', test: /\breturn\s*\{\s*(ok|success)\s*:/ },
-      { name: 'null return on failure', test: /\bcatch\s*(\([^)]*\))?\s*\{\s*return\s+(null|undefined)\s*[;}]/ },
-      { name: 'silent catch', test: /\bcatch\s*(\([^)]*\))?\s*\{\s*\}/ },
+    ],
+  },
+  {
+    key: 'caught',
+    label: 'handling a caught error',
+    minUses: 6,
+    dialects: [
+      // `catch {}` and `catch { return null }` are the same decision — carry
+      // on without it — differing only in whether the function returns.
+      { name: 'swallow', test: /\bcatch\s*(\([^)]*\))?\s*\{\s*(return\s+(null|undefined)\s*;?\s*)?\}/ },
       { name: 'console then rethrow', test: /\bcatch[\s\S]{0,80}console\.(error|warn)[\s\S]{0,60}\bthrow\b/ },
     ],
   },
@@ -53,7 +65,10 @@ const CATEGORIES: Category[] = [
     dialects: [
       { name: 'console', test: /\bconsole\.(log|info|warn|error|debug)\s*\(/ },
       { name: 'logger object', test: /\b(logger|log)\.(info|warn|error|debug|trace)\s*\(/ },
-      { name: 'process.stdout', test: /\bprocess\.(stdout|stderr)\.write\s*\(/ },
+      // A write that starts with `\r` redraws a progress line in place, which
+      // console cannot do because it always ends the line. That is a
+      // different job, not a rival way of logging.
+      { name: 'process.stdout', test: /\bprocess\.(stdout|stderr)\.write\s*\(\s*(?![`'"]\\r)/ },
     ],
   },
   {
@@ -76,8 +91,10 @@ const CATEGORIES: Category[] = [
     minUses: 4,
     dialects: [
       { name: 'schema library', test: /\b(z|yup|joi|v)\.(object|string|number|array)\s*\(/ },
+      // Only ways of checking a value's *type*. `if (!x) return` checks that
+      // it is there at all, which a typeof guard cannot replace, so counting
+      // it as a rival made parsing untrusted JSON carefully look like drift.
       { name: 'manual typeof guard', test: /\btypeof\s+\w+\s*(===|!==)\s*['"](string|number|boolean|object)['"]/ },
-      { name: 'truthiness check', test: /\bif\s*\(\s*!\w+\s*\)\s*(\{\s*)?(throw|return)\b/ },
     ],
   }
 ];

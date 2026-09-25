@@ -84,7 +84,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['all', 'dead', 'duplicate', 'drift', 'contradiction'] },
+        kind: { type: 'string', enum: ['all', 'dead', 'duplicate', 'drift', 'contradiction', 'unfinished'] },
         limit: { type: 'number' },
       },
     },

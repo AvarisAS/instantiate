@@ -8,6 +8,7 @@ import { findDuplicates } from './analysis/dupes.js';
 import { findConcepts } from './analysis/concepts.js';
 import { findDrift } from './analysis/drift.js';
 import { findContradictions } from './analysis/contradiction.js';
+import { findUnfinished } from './analysis/unfinished.js';
 import { UserError } from './errors.js';
 import type { Coverage } from './analysis/coverage.js';
 import type { RepoInfo } from './types.js';
@@ -51,6 +52,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
   const dupes = findDuplicates(graph, config);
   const drift = findDrift(graph);
   const contradictions = findContradictions(graph);
+  const unfinished = findUnfinished(graph, config);
   const concepts = findConcepts(graph, config.concepts);
   const analyseMs = Date.now() - analyseStart;
 
@@ -58,6 +60,19 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
     warnings.push(
       `Merged a ${options.coverage.format} coverage report covering ${options.coverage.files} files. ` +
         'Anything the tests executed counts as reached, however it was reached.',
+    );
+  }
+  if (dead.pluginRoots.size > 0) {
+    const applied = [...dead.pluginRoots].map(([name, count]) => `${name} (${count})`).join(', ');
+    warnings.push(`Framework conventions kept symbols alive that nothing names: ${applied}.`);
+  }
+  const sites = graph.dynamicSites;
+  if (sites.length > 0) {
+    const first = sites.slice(0, 3).map((site) => `${site.file}:${site.line}`).join(', ');
+    warnings.push(
+      `${sites.length} place${sites.length === 1 ? '' : 's'} reach code by a name computed at run time (${first}` +
+        `${sites.length > 3 ? ', …' : ''}), which static analysis cannot follow. ` +
+        'A coverage report (--coverage) or a plugin rule in .instantiate.yml settles what they reach.',
     );
   }
   if (dead.noEntrypoints) {
@@ -84,6 +99,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
     duplicateLoc: dupes.duplicateLoc,
     driftCount: drift.count,
     contradictionCount: contradictions.count,
+    unfinishedCount: unfinished.count,
     indexMs,
     analyseMs,
   };
@@ -95,6 +111,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
     ...dupes.findings,
     ...drift.findings,
     ...contradictions.findings,
+    ...unfinished.findings,
   ]);
   return { graph, findings, concepts, stats, config, warnings, repo };
 }
@@ -115,6 +132,8 @@ function severityOf(finding: Finding): Finding['severity'] {
   if (finding.kind === 'contradiction') {
     return finding.score >= 0.8 ? 'high' : finding.score >= 0.5 ? 'medium' : 'low';
   }
+  // A feature that silently does nothing matters however few lines it spans.
+  if (finding.kind === 'unfinished') return finding.score >= 0.5 ? 'medium' : 'low';
   const impact = finding.score * Math.log2(finding.loc + 2);
   return impact >= 3.5 ? 'high' : impact >= 1.8 ? 'medium' : 'low';
 }
@@ -135,6 +154,7 @@ async function mergePython(graph: CodeGraph, config: Config): Promise<void> {
   for (const [path, record] of python.files) graph.files.set(path, record);
   for (const [path, source] of python.sources) graph.sources.set(path, source);
   graph.edges.push(...python.edges);
+  graph.dynamicSites.push(...python.dynamicSites);
   // A `__main__` guard is discovered by reading the file, not by its name, so
   // these arrive as exact paths rather than as globs.
   config.entrypoints = [...config.entrypoints, ...python.scripts];
@@ -161,7 +181,7 @@ export function rank(findings: Finding[]): Finding[] {
 
 /** Ranking weight: confidence times size, except where size does not mean lines. */
 function weight(finding: Finding): number {
-  if (finding.kind === 'contradiction') return finding.score * 4;
+  if (finding.kind === 'contradiction' || finding.kind === 'unfinished') return finding.score * 4;
   return finding.score * Math.log2(finding.loc + 2);
 }
 

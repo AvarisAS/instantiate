@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { CodeSymbol, Edge, FileRecord, SymbolKind } from '../types.js';
+import type { CodeSymbol, DynamicSite, Edge, FileRecord, SymbolKind } from '../types.js';
 import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
 
@@ -25,6 +25,7 @@ export interface PythonGraph {
   files: Map<string, FileRecord>;
   /** Files with a `__main__` guard: these are run, so they are entrypoints. */
   scripts: string[];
+  dynamicSites: DynamicSite[];
 }
 
 let parser: Parser | undefined;
@@ -122,10 +123,83 @@ export async function buildPythonGraph(config: Config, files: string[]): Promise
     connect(index.tree.rootNode, index, symbols, edges, byModule, methodsByName, config);
   }
 
-  return { sources, symbols, edges, files: fileRecords, scripts };
+  const dynamicSites: DynamicSite[] = [];
+  for (const index of indexes) {
+    connectDynamic(index.file, sources.get(index.file) ?? '', symbols, edges, byModule, methodsByName, dynamicSites);
+  }
+
+  return { sources, symbols, edges, files: fileRecords, scripts, dynamicSites };
 }
 
 /** `pkg/sub/mod.py` -> `pkg.sub.mod`, which is how Python names it. */
+/**
+ * Reflection, read from the text rather than the tree: the patterns are few
+ * and fixed, and each one only ever adds edges or records a site.
+ *
+ * - `getattr(obj, "name")` names a member with a string; it is a call to every
+ *   method of that name, exactly like `obj.name`.
+ * - `import_module(f"app.plugins.{name}")` has a fixed prefix, and every module
+ *   under it is one this may load.
+ * - Anything else computed — `getattr(obj, name)`, `globals()[name]`, `eval` —
+ *   is recorded as a place the graph cannot follow.
+ */
+function connectDynamic(
+  file: string,
+  source: string,
+  symbols: Map<string, CodeSymbol>,
+  edges: Edge[],
+  byModule: Map<string, FileIndex>,
+  methodsByName: Map<string, string[]>,
+  sites: DynamicSite[],
+): void {
+  const from = moduleId(file);
+  const lines = source.split('\n');
+  lines.forEach((text, i) => {
+    const line = i + 1;
+    const site = (kind: DynamicSite['kind'], match: string): void => {
+      sites.push({ file, line, kind, text: match.trim().slice(0, 120) });
+    };
+
+    for (const m of text.matchAll(/\b(?:getattr|hasattr)\(\s*[^,]+?,\s*([^,)]+)/g)) {
+      const literal = /^(['"])([A-Za-z_]\w*)\1$/.exec(m[1].trim());
+      if (!literal) {
+        site('reflection', m[0]);
+        continue;
+      }
+      for (const id of methodsByName.get(literal[2]) ?? []) {
+        edges.push({ from, to: id, kind: 'calls', file, line });
+      }
+    }
+
+    for (const m of text.matchAll(/\b(?:import_module|__import__)\(\s*([^,)]+)/g)) {
+      const argument = m[1].trim();
+      if (/^(['"])[\w.]+\1$/.test(argument)) continue; // A literal is an ordinary import.
+      const prefix =
+        /^f(['"])([\w.]+)\{/.exec(argument)?.[2] ?? /^(['"])([\w.]+)\1\s*\+/.exec(argument)?.[2];
+      const targets = prefix
+        ? [...byModule.entries()].filter(([name]) => `.${name}`.includes(`.${prefix}`) && name !== prefix.replace(/\.$/, ''))
+        : [];
+      if (targets.length === 0) {
+        site('import', m[0]);
+        continue;
+      }
+      for (const [, target] of targets) {
+        edges.push({ from, to: moduleId(target.file), kind: 'imports', file, line });
+        for (const symbol of symbols.values()) {
+          // Loading a module by name is followed by using what it defines.
+          if (symbol.file === target.file && symbol.kind !== 'module' && !symbol.id.split('#')[1].includes('.')) {
+            edges.push({ from, to: symbol.id, kind: 'references', file, line });
+          }
+        }
+      }
+    }
+
+    for (const m of text.matchAll(/\b(?:globals|locals|vars)\(\)\s*\[[^\]]*\]|\b(?:eval|exec)\([^)]*\)?/g)) {
+      site('reflection', m[0]);
+    }
+  });
+}
+
 function moduleName(file: string): string {
   return file
     .replace(/\.py$/, '')
@@ -252,11 +326,26 @@ function record(
       // Python has no export keyword; a leading underscore is the convention
       // for "internal", and everything else is part of the module's surface.
       exported: !name.startsWith('_'),
+      decorators: decoratorsOf(node),
       body: normaliseBody(node.text),
       signature: signatureOf(node),
     },
     container,
   );
+}
+
+/** `@app.route("/")` -> `app.route`, `@pytest.fixture` -> `pytest.fixture`. */
+function decoratorsOf(node: Parser.SyntaxNode): string[] | undefined {
+  const wrapper = node.parent;
+  if (wrapper?.type !== 'decorated_definition') return undefined;
+  const out: string[] = [];
+  for (let i = 0; i < wrapper.namedChildCount; i++) {
+    const child = wrapper.namedChild(i);
+    if (child?.type !== 'decorator') continue;
+    const name = child.text.replace(/^@\s*/, '').split('(')[0].trim();
+    if (name) out.push(name);
+  }
+  return out.length ? out : undefined;
 }
 
 /**

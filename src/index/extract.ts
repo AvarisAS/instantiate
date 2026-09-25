@@ -1,8 +1,8 @@
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import type { CodeGraph, CodeSymbol, Edge, FileRecord, SymbolKind } from '../types.js';
+import { join, dirname, basename, resolve as resolvePath } from 'node:path';
+import type { CodeGraph, CodeSymbol, DynamicSite, Edge, FileRecord, SymbolKind } from '../types.js';
 import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
 import { relPath } from '../config.js';
@@ -16,6 +16,7 @@ export function buildGraph(config: Config): CodeGraph {
 
   const symbols = new Map<string, CodeSymbol>();
   const edges: Edge[] = [];
+  const dynamicSites: DynamicSite[] = [];
   const fileRecords = new Map<string, FileRecord>();
   const sources = new Map<string, string>();
   /** Declaration node -> symbol id, so pass two can resolve references to symbols. */
@@ -45,7 +46,7 @@ export function buildGraph(config: Config): CodeGraph {
   const byFileName = new Map(sourceFiles.map((sf) => [sf.fileName, sf]));
   for (const sf of sourceFiles) {
     const rel = relPath(config.root, sf.fileName);
-    collectEdges(sf, rel, sf, checker, declToId, symbols, edges, config, program, byFileName);
+    collectEdges(sf, rel, sf, checker, declToId, symbols, edges, config, program, byFileName, dynamicSites);
   }
 
   linkClassMembers(symbols, edges);
@@ -58,6 +59,7 @@ export function buildGraph(config: Config): CodeGraph {
     edges,
     files: fileRecords,
     entrypoints: [],
+    dynamicSites,
     createdAt: Date.now(),
   };
 }
@@ -427,12 +429,24 @@ function record(
       // A class member is part of its class's surface unless it is `#private`.
       exported: isExported(node) || (!!container && !name.startsWith('#')),
       ambient: isAmbient(node),
+      decorators: decoratorsOf(node, sf),
       body: normaliseBody(node, sf),
       signature: signatureOf(node),
     },
     container,
   );
   declToId.set(node, id);
+}
+
+/** `@Controller('x')` -> `Controller`, `@app.route('/')` -> `app.route`. */
+function decoratorsOf(node: ts.Node, sf: ts.SourceFile): string[] | undefined {
+  if (!ts.canHaveDecorators(node)) return undefined;
+  const decorators = ts.getDecorators(node);
+  if (!decorators?.length) return undefined;
+  return decorators.map((d) => {
+    const expression = ts.isCallExpression(d.expression) ? d.expression.expression : d.expression;
+    return expression.getText(sf);
+  });
 }
 
 /**
@@ -532,8 +546,13 @@ function collectEdges(
   config: Config,
   program: ts.Program,
   byFileName: Map<string, ts.SourceFile>,
+  dynamicSites: DynamicSite[],
 ): void {
   const enclosing = enclosingSymbolId(node, declToId);
+  const site = (kind: DynamicSite['kind'], at: ts.Node): void => {
+    const pos = sf.getLineAndCharacterOfPosition(at.getStart(sf));
+    dynamicSites.push({ file, line: pos.line + 1, kind, text: at.getText(sf).replace(/\s+/g, ' ').slice(0, 120) });
+  };
 
   // `await import('./x')` is invisible to symbol resolution: the reference is a
   // string. Without this, every lazily loaded module looks like dead code — the
@@ -549,12 +568,63 @@ function collectEdges(
     const target = resolveModule(node.arguments[0].text, sf, program, byFileName, config.root, config);
     if (target) {
       const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      // Without this edge a required CommonJS file with any top-level code
+      // looked like a script nobody loads, and everything in it was rooted.
+      const targetModule = `${relPath(config.root, target.fileName)}#<module>`;
+      edges.push({ from: enclosing, to: targetModule, kind: 'imports', file, line: pos.line + 1 });
       // We cannot tell which export is used, so every export of the module is
       // reachable. Over-approximating here is correct: a false "alive" costs a
       // missed finding, a false "dead" costs the user's trust in all of them.
       for (const exported of exportsOf(target, checker, declToId)) {
         edges.push({ from: enclosing, to: exported, kind: 'calls', file, line: pos.line + 1 });
       }
+    }
+  }
+
+  // `import(\`./locales/${lang}\`)`: the name is computed, but its prefix is
+  // not. Every file the prefix could complete to is a module this may load,
+  // which is far closer to the truth than none of them.
+  if (
+    ts.isCallExpression(node) &&
+    (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+      (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
+    node.arguments.length > 0 &&
+    !ts.isStringLiteralLike(node.arguments[0]) &&
+    enclosing
+  ) {
+    const prefix = literalPrefix(node.arguments[0]);
+    const targets = prefix ? filesWithPrefix(prefix, sf, byFileName) : [];
+    const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+    for (const target of targets) {
+      const targetModule = `${relPath(config.root, target.fileName)}#<module>`;
+      edges.push({ from: enclosing, to: targetModule, kind: 'imports', file, line: pos.line + 1 });
+      for (const exported of exportsOf(target, checker, declToId)) {
+        edges.push({ from: enclosing, to: exported, kind: 'calls', file, line: pos.line + 1 });
+      }
+    }
+    if (targets.length === 0) site('import', node);
+  }
+
+  // `this[method]()` with `method: 'get' | 'post'`: the checker knows every
+  // value the key can take, so each is a member this may call. Anything wider
+  // than a set of literals is recorded as a place the graph cannot follow.
+  if (
+    ts.isElementAccessExpression(node) &&
+    !ts.isStringLiteralLike(node.argumentExpression) &&
+    ts.isCallExpression(node.parent) &&
+    node.parent.expression === node &&
+    enclosing
+  ) {
+    const names = literalNames(node.argumentExpression, checker);
+    if (names) {
+      const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      for (const name of names) {
+        for (const id of membersNamed(symbols, name)) {
+          if (id !== enclosing) edges.push({ from: enclosing, to: id, kind: 'calls', file, line: pos.line + 1 });
+        }
+      }
+    } else if (!isNumeric(node.argumentExpression, checker)) {
+      site('member', node);
     }
   }
 
@@ -695,7 +765,7 @@ function collectEdges(
   }
 
   ts.forEachChild(node, (child) =>
-    collectEdges(child, file, sf, checker, declToId, symbols, edges, config, program, byFileName),
+    collectEdges(child, file, sf, checker, declToId, symbols, edges, config, program, byFileName, dynamicSites),
   );
 }
 
@@ -922,6 +992,60 @@ function membersNamed(symbols: Map<string, CodeSymbol>, name: string): string[] 
     if (symbol.name === name && (symbol.kind === 'method' || symbol.kind === 'function')) {
       out.push(symbol.id);
     }
+  }
+  return out;
+}
+
+/** Every value a key can take, when the checker knows them all to be string literals. */
+function literalNames(expression: ts.Expression, checker: ts.TypeChecker): string[] | undefined {
+  const type = checker.getTypeAtLocation(expression);
+  const parts = type.isUnion() ? type.types : [type];
+  // Past a few dozen the union is an index, not a choice, and over-rooting
+  // that many members would hide real findings.
+  if (parts.length > 40) return undefined;
+  const names: string[] = [];
+  for (const part of parts) {
+    if (!part.isStringLiteral()) return undefined;
+    names.push(part.value);
+  }
+  return names;
+}
+
+function isNumeric(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  const type = checker.getTypeAtLocation(expression);
+  return (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike)) !== 0;
+}
+
+/** The fixed start of a computed specifier: `\`./locales/${x}\`` or `'./locales/' + x`. */
+function literalPrefix(expression: ts.Expression): string | undefined {
+  if (ts.isTemplateExpression(expression)) return expression.head.text || undefined;
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return ts.isStringLiteralLike(expression.left) ? expression.left.text : literalPrefix(expression.left);
+  }
+  return undefined;
+}
+
+/**
+ * Indexed files a relative prefix can complete to, in its own directory or
+ * as a directory's index file. Bare and aliased prefixes are left alone:
+ * guessing which package they mean would invent edges.
+ */
+function filesWithPrefix(
+  prefix: string,
+  from: ts.SourceFile,
+  byFileName: Map<string, ts.SourceFile>,
+): ts.SourceFile[] {
+  if (!prefix.startsWith('./') && !prefix.startsWith('../')) return [];
+  const absolute = resolvePath(dirname(from.fileName), prefix);
+  const dir = prefix.endsWith('/') ? absolute : dirname(absolute);
+  const stem = prefix.endsWith('/') ? '' : basename(absolute);
+  const out: ts.SourceFile[] = [];
+  for (const [fileName, sf] of byFileName) {
+    if (sf === from || !fileName.startsWith(`${dir}/`)) continue;
+    const rest = fileName.slice(dir.length + 1);
+    const direct = !rest.includes('/');
+    const index = /^[^/]+\/index\.[cm]?[jt]sx?$/.test(rest);
+    if ((direct || index) && rest.startsWith(stem)) out.push(sf);
   }
   return out;
 }
