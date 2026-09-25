@@ -1,0 +1,18 @@
+[
+  { "slug": "hono", "name": "Hono", "repo": "https://github.com/honojs/hono", "ref": "6cadf7537385c6e3df9cbd6d05c9b84c82ae0361", "language": "TypeScript", "about": "Web framework for every JavaScript runtime" },
+  { "slug": "zod", "name": "Zod", "repo": "https://github.com/colinhacks/zod", "ref": "10dda3a3a4bc76ed0bf83e994de194587e489ef8", "language": "TypeScript", "about": "Schema validation with static types" },
+  { "slug": "ky", "name": "Ky", "repo": "https://github.com/sindresorhus/ky", "ref": "0d59458a0a58e1c3d7c6db0ab17ed5c7cd671e47", "language": "TypeScript", "about": "Tiny HTTP client built on fetch" },
+  { "slug": "zustand", "name": "Zustand", "repo": "https://github.com/pmndrs/zustand", "ref": "b57db4f86ef179285da216eeb291266da82c361c", "language": "TypeScript", "about": "Small state management for React" },
+  { "slug": "ofetch", "name": "ofetch", "repo": "https://github.com/unjs/ofetch", "ref": "1dbc37fd1ceab832fc7c90cad81b1091c95ba563", "language": "TypeScript", "about": "A better fetch API" },
+  { "slug": "h3", "name": "h3", "repo": "https://github.com/unjs/h3", "ref": "b31898362a111c526271989682aef54b2a15077f", "language": "TypeScript", "about": "Minimal HTTP framework" },
+  { "slug": "consola", "name": "Consola", "repo": "https://github.com/unjs/consola", "ref": "c47faac1738b7383971c6c20b5a34ffa15e7cc3b", "language": "TypeScript", "about": "Elegant console logger" },
+  { "slug": "execa", "name": "Execa", "repo": "https://github.com/sindresorhus/execa", "ref": "8017b279e19347efaf2587711c2d57dbd4330740", "language": "JavaScript", "about": "Process execution for humans" },
+  { "slug": "chalk", "name": "Chalk", "repo": "https://github.com/chalk/chalk", "ref": "8960ada92ca0f9220c8863495bae78dcc0c323ee", "language": "JavaScript", "about": "Terminal string styling" },
+  { "slug": "requests", "name": "Requests", "repo": "https://github.com/psf/requests", "ref": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60", "language": "Python", "about": "HTTP for humans" },
+  { "slug": "click", "name": "Click", "repo": "https://github.com/pallets/click", "ref": "3cbaa76b6014be7427d1ab06b4af40f01e7c278e", "language": "Python", "about": "Command-line interfaces" },
+  { "slug": "mux", "name": "gorilla/mux", "repo": "https://github.com/gorilla/mux", "ref": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265", "language": "Go", "about": "HTTP router and URL matcher" },
+  { "slug": "cobra", "name": "Cobra", "repo": "https://github.com/spf13/cobra", "ref": "adbc8813901bba65827259daa8e22ff94ec1f30e", "language": "Go", "about": "Modern CLI applications" },
+  { "slug": "glow", "name": "Glow", "repo": "https://github.com/charmbracelet/glow", "ref": "6b365eea95f7541d4af441d971010b09f6082a0e", "language": "Go", "about": "Markdown in the terminal" },
+  { "slug": "rainbow", "name": "Rainbow", "repo": "https://github.com/onevcat/Rainbow", "ref": "711ca908ca19d16e577d575c8d0a48151a16bb1b", "language": "Swift", "about": "Colour for Swift console output" },
+  { "slug": "gifski", "name": "Gifski", "repo": "https://github.com/sindresorhus/Gifski", "ref": "e184b284886929b9401e2442629a57650d3231f4", "language": "Swift", "about": "Video to high-quality GIF, for macOS" }
+]

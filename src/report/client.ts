@@ -437,27 +437,7 @@ function symbolsPane() {
  * empty buttons. Only the handful actually used travels with it.
  * ------------------------------------------------------------------------ */
 
-const ICONS = {
-  'chevron-left': '<path d="m15 18-6-6 6-6"/>',
-  'chevron-right': '<path d="m9 18 6-6-6-6"/>',
-  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
-  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
-  grid: '<rect width="7" height="7" x="3" y="3"/><rect width="7" height="7" x="14" y="3"/>' +
-        '<rect width="7" height="7" x="14" y="14"/><rect width="7" height="7" x="3" y="14"/>',
-  network: '<rect x="16" y="16" width="6" height="6"/><rect x="2" y="16" width="6" height="6"/>' +
-           '<rect x="9" y="2" width="6" height="6"/>' +
-           '<path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>',
-  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/>' +
-            '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/>',
-  filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
-  ellipsis: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
-  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
-  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>' +
-         '<path d="M12 9v4"/><path d="M12 17h.01"/>',
-  code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
-  arrowRight: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
-  arrowLeft: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
-};
+// ICONS comes from theme.ts, prepended by html.ts: one icon set for the report and the site.
 
 /** One icon, sized in ems so it follows whatever text it sits beside. */
 function icon(name, extraClass) {

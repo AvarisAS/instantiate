@@ -12,3 +12,6 @@ dist
 
 # Calibration pairs labelled on private code.
 scripts/labelled-pairs.local.json
+
+# The website, built by scripts/build-site.ts.
+_site

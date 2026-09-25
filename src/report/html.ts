@@ -5,6 +5,7 @@ import { layout, treeFromPaths, type LaidOut } from './treemap.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { snippet, type Snippet } from './snippets.js';
+import { ICONS, THEME_TOKENS } from './theme.js';
 
 /**
  * A single self-contained HTML file.
@@ -482,128 +483,7 @@ function escapeJson(json: string): string {
 }
 
 const STYLE = `
-/*
- * A report is read the way an instrument panel is read: severity first, then
- * scale, then the code. So severity is carried by shape as well as colour — a
- * stripe down the edge of every finding — and the semantic scale is kept
- * separate from the accent, which marks only what is interactive.
- *
- * No web fonts: a report is opened offline, attached to a mail, read on a
- * plane. A font that fails to load silently would take the typography with it.
- */
-:root {
-  /*
-   * Flexoki, by Steph Ango. An ink-on-paper palette: warm neutrals that hold
-   * their character in both themes, and colours picked to sit on them without
-   * shouting. Chosen over the cool blue-greys because a page full of code
-   * should read like a printed page, not like a control panel.
-   */
-  --bg: #FFFCF0;          /* paper */
-  --panel: #FFFCF0;
-  --sunk: #F2F0E5;        /* base-50 */
-  --ink: #100F0F;         /* black */
-  --ink-soft: #403E3C;    /* base-800 */
-  --muted: #6F6E69;       /* base-600 */
-  --line: #DAD8CE;        /* base-150 */
-  --line-strong: #B7B5AC; /* base-300 */
-  --accent: #205EA6;      /* blue-600 */
-  --accent-soft: #E1ECF7;
-  --high: #AF3029;        /* red-600 */
-  --medium: #AD8301;      /* yellow-600 */
-  --low: #878580;         /* base-500 */
-  --good: #66800B;        /* green-600 */
-
-  /* Three bands, not a gradient: "clean", "some" and "mostly" have to be
-     distinguishable at a glance in a map of four hundred boxes. */
-  --heat0: #EDEBE0;
-  --heat1: #E8C88A;
-  --heat2: #C86A56;
-
-  --focus-tint: color-mix(in srgb, var(--accent) 10%, transparent);
-  --tok-comment: #878580;  /* base-500 */
-  --tok-string: #66800B;   /* green-600 */
-  --tok-keyword: #5E409D;  /* purple-600 */
-  --tok-number: #BC5215;   /* orange-600 */
-  --tok-type: #205EA6;     /* blue-600 */
-  --tok-fn: #24837B;       /* cyan-600 */
-  --tok-punct: #6F6E69;
-  --tint-high: color-mix(in srgb, var(--high) 10%, transparent);
-  --tint-medium: color-mix(in srgb, var(--medium) 13%, transparent);
-  --tint-low: color-mix(in srgb, var(--low) 9%, transparent);
-
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --step--1: 0.78rem;
-  --step-0: 0.94rem;
-  --step-1: 1.15rem;
-  --step-2: 1.6rem;
-  --step-3: 2.1rem;
-}
-
-/* Flexoki's dark side: the same ink, inverted. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #100F0F;          /* black */
-    --panel: #1C1B1A;       /* base-950 */
-    --sunk: #282726;        /* base-900 */
-    --ink: #CECDC3;         /* base-200 */
-    --ink-soft: #B7B5AC;    /* base-300 */
-    --muted: #878580;       /* base-500 */
-    --line: #343331;        /* base-850 */
-    --line-strong: #575653; /* base-700 */
-    --accent: #4385BE;      /* blue-400 */
-    --accent-soft: #1A2733;
-    --high: #D14D41;        /* red-400 */
-    --medium: #D0A215;      /* yellow-400 */
-    --low: #878580;
-    --good: #879A39;        /* green-400 */
-    --heat0: #2A2927;
-    --heat1: #6E5A1E;
-    --heat2: #8C3B31;
-    --focus-tint: color-mix(in srgb, var(--accent) 18%, transparent);
-    --tok-comment: #6F6E69;  /* base-600 */
-    --tok-string: #879A39;   /* green-400 */
-    --tok-keyword: #8B7EC8;  /* purple-400 */
-    --tok-number: #DA702C;   /* orange-400 */
-    --tok-type: #4385BE;     /* blue-400 */
-    --tok-fn: #3AA99F;       /* cyan-400 */
-    --tok-punct: #878580;
-    --tint-high: color-mix(in srgb, var(--high) 14%, transparent);
-    --tint-medium: color-mix(in srgb, var(--medium) 16%, transparent);
-    --tint-low: color-mix(in srgb, var(--low) 12%, transparent);
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #100F0F;
-  --panel: #1C1B1A;
-  --sunk: #282726;
-  --ink: #CECDC3;
-  --ink-soft: #B7B5AC;
-  --muted: #878580;
-  --line: #343331;
-  --line-strong: #575653;
-  --accent: #4385BE;
-  --accent-soft: #1A2733;
-  --high: #D14D41;
-  --medium: #D0A215;
-  --low: #878580;
-  --good: #879A39;
-  --heat0: #2A2927;
-  --heat1: #6E5A1E;
-  --heat2: #8C3B31;
-  --focus-tint: color-mix(in srgb, var(--accent) 18%, transparent);
-  --tok-comment: #6F6E69;
-  --tok-string: #879A39;
-  --tok-keyword: #8B7EC8;
-  --tok-number: #DA702C;
-  --tok-type: #4385BE;
-  --tok-fn: #3AA99F;
-  --tok-punct: #878580;
-  --tint-high: color-mix(in srgb, var(--high) 14%, transparent);
-  --tint-medium: color-mix(in srgb, var(--medium) 16%, transparent);
-  --tint-low: color-mix(in srgb, var(--low) 12%, transparent);
-}
-
+${THEME_TOKENS}
 * { box-sizing: border-box; }
 
 /* Icons size themselves against the text beside them, and inherit its colour. */
@@ -1025,7 +905,9 @@ const SCRIPT = (() => {
     try {
       // In an ES-module package the compiler marks every file a module with a
       // trailing `export {};`, which a classic <script> rejects outright.
-      return readFileSync(new URL(`./${name}`, import.meta.url), 'utf8').replace(/^export \{\};?\s*$/m, '');
+      // The icon set is shared with the website, so it is handed in here.
+      const source = readFileSync(new URL(`./${name}`, import.meta.url), 'utf8').replace(/^export \{\};?\s*$/m, '');
+      return `const ICONS = ${JSON.stringify(ICONS)};\n${source}`;
     } catch {
       // Try the next.
     }
