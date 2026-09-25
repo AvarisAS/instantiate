@@ -226,7 +226,9 @@ async function main(): Promise<number> {
       console.log(check.lines.join('\n'));
       console.log('');
       if (!check.ok) {
-        console.error(`${red('✗')} This change adds to the mess. Run ${cyan('instantiate scan')} to see what.\n`);
+        // Same stream as the rows above: CI logs do not keep stdout and stderr
+        // in order, and the verdict landed in the middle of the table.
+        console.log(`${red('✗')} This change adds to the mess. Run ${cyan('instantiate scan')} to see what.\n`);
         return 1;
       }
       console.log(`${green('✓')} within budget\n`);
