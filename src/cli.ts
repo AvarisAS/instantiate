@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { scan, loadDismissals, saveDismissals, applyDismissals } from './api.js';
 import { describeConfig, loadConfig, type Config } from './config.js';
 import { renderSummary, renderFindings } from './report/terminal.js';
@@ -196,7 +196,8 @@ async function main(): Promise<number> {
       const { renderHtmlReport } = await import('./report/html.js');
       const html = renderHtmlReport(result, all);
       const out = args.out ?? join(args.root, '.instantiate', 'report.html');
-      mkdirSync(join(args.root, '.instantiate'), { recursive: true });
+      // Only the folder the report goes in: with --out, nothing is written to the scanned repo.
+      mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, html);
       console.log(`\n${green('✓')} ${out} ${dim(`(${(html.length / 1024).toFixed(0)} KB, self-contained)`)}\n`);
       return 0;
