@@ -1,5 +1,6 @@
 import { Language, Parser } from 'web-tree-sitter';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import type { CodeSymbol, DynamicSite, Edge, FileRecord } from '../types.js';
 import type { Config } from '../config.js';
 
@@ -57,4 +58,24 @@ export function parserFor(grammar: string): Promise<Parser> {
     parsers.set(grammar, parser);
   }
   return parser;
+}
+
+/** What every indexer records about a file it read. */
+export function fileRecord(file: string, text: string): FileRecord {
+  return {
+    path: file,
+    loc: text.split('\n').length,
+    hash: createHash('sha1').update(text).digest('hex').slice(0, 16),
+    indexedAt: Date.now(),
+  };
+}
+
+/**
+ * C-style comments removed, line for line: a block comment becomes blanks so
+ * every line number still matches the file. Go and Swift both use it.
+ */
+export function stripCStyleComments(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/[^\n]*/g, '');
 }

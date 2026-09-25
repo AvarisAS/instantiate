@@ -1,11 +1,10 @@
 import type { Node, Tree } from 'web-tree-sitter';
 import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
-import { createHash } from 'node:crypto';
 import type { CodeSymbol, DynamicSite, Edge, FileRecord, SymbolKind } from '../types.js';
 import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
-import { parserFor, type Backend, type LanguageGraph } from './treesitter.js';
+import { fileRecord, parserFor, type Backend, type LanguageGraph } from './treesitter.js';
 
 /**
  * Python, through tree-sitter.
@@ -59,12 +58,7 @@ async function buildPythonGraph(config: Config, files: string[]): Promise<Langua
     const tree = p.parse(source);
     if (!tree) continue;
 
-    fileRecords.set(file, {
-      path: file,
-      loc: source.split('\n').length,
-      hash: createHash('sha1').update(source).digest('hex').slice(0, 16),
-      indexedAt: Date.now(),
-    });
+    fileRecords.set(file, fileRecord(file, source));
 
     sources.set(file, source.replace(/#[^\n]*/g, ''));
 
@@ -290,6 +284,7 @@ function declareMethods(
   }
 }
 
+// instantiate-ignore duplicate: one per language by design, each reading its own syntax tree
 function record(
   node: Node,
   name: string,

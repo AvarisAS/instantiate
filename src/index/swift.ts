@@ -1,11 +1,10 @@
 import type { Node } from 'web-tree-sitter';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { relative } from 'node:path';
 import type { CodeSymbol, DynamicSite, Edge, FileRecord, SymbolKind } from '../types.js';
 import { record as recordSymbol, recordModule, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
-import { parserFor, type Backend, type LanguageGraph } from './treesitter.js';
+import { fileRecord, parserFor, stripCStyleComments, type Backend, type LanguageGraph } from './treesitter.js';
 
 /**
  * Swift, through tree-sitter.
@@ -110,13 +109,8 @@ async function buildSwiftGraph(config: Config, files: string[]): Promise<Languag
     const tree = parser.parse(text);
     if (!tree) continue;
     const file = relative(config.root, absolute).split('\\').join('/');
-    records.set(file, {
-      path: file,
-      loc: text.split('\n').length,
-      hash: createHash('sha1').update(text).digest('hex').slice(0, 16),
-      indexedAt: Date.now(),
-    });
-    sources.set(file, stripComments(text));
+    records.set(file, fileRecord(file, text));
+    sources.set(file, stripCStyleComments(text));
     recordModule(symbols, file, text.split('\n').length);
     trees.push({ file, root: tree.rootNode });
 
@@ -281,6 +275,7 @@ function isExported(node: Node): boolean {
   return /\b(public|open)\b/.test(modifierText(node));
 }
 
+// instantiate-ignore duplicate: one per language by design, each reading its own syntax tree
 function record(
   node: Node,
   name: string,
@@ -299,7 +294,7 @@ function record(
       endLine: node.endPosition.row + 1,
       exported: isExported(node),
       decorators: attributes(node),
-      body: stripComments(node.text).replace(/\s+/g, ' ').trim(),
+      body: stripCStyleComments(node.text).replace(/\s+/g, ' ').trim(),
       signature: `${kind}:${node.namedChildren.filter((c) => c?.type === 'parameter').length}`,
     },
     container,
@@ -320,11 +315,4 @@ function isDeclarationName(node: Node): boolean {
     return true;
   }
   return false;
-}
-
-/** Line-preserving: comments become blanks, so line numbers still match the file. */
-function stripComments(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/\/\/[^\n]*/g, '');
 }

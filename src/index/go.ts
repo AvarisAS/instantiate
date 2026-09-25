@@ -1,11 +1,10 @@
 import type { Node } from 'web-tree-sitter';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import type { CodeSymbol, DynamicSite, Edge, FileRecord, SymbolKind } from '../types.js';
 import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
-import { parserFor, type Backend, type LanguageGraph } from './treesitter.js';
+import { fileRecord, parserFor, stripCStyleComments, type Backend, type LanguageGraph } from './treesitter.js';
 
 /**
  * Go, through tree-sitter.
@@ -87,13 +86,8 @@ async function buildGoGraph(config: Config, files: string[]): Promise<LanguageGr
     const packageName = root.namedChildren.find((n) => n?.type === 'package_clause')?.namedChild(0)?.text ?? '';
     const pkg = `${dir}|${packageName}`;
 
-    records.set(file, {
-      path: file,
-      loc: text.split('\n').length,
-      hash: createHash('sha1').update(text).digest('hex').slice(0, 16),
-      indexedAt: Date.now(),
-    });
-    sources.set(file, stripComments(text));
+    records.set(file, fileRecord(file, text));
+    sources.set(file, stripCStyleComments(text));
     recordModule(symbols, file, text.split('\n').length);
     if (!byDir.has(dir)) byDir.set(dir, new Set());
     byDir.get(dir)!.add(pkg);
@@ -270,6 +264,7 @@ function isExported(name: string): boolean {
   return /^[A-Z]/.test(name);
 }
 
+// instantiate-ignore duplicate: one per language by design, each reading its own syntax tree
 function record(
   node: Node,
   name: string,
@@ -287,7 +282,7 @@ function record(
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       exported: isExported(name),
-      body: stripComments(node.text).replace(/\s+/g, ' ').trim(),
+      body: stripCStyleComments(node.text).replace(/\s+/g, ' ').trim(),
       signature: `${kind}:${node.childForFieldName('parameters')?.namedChildCount ?? 0}`,
     },
     container,
@@ -422,11 +417,4 @@ function isDeclarationName(node: Node): boolean {
 
 function isCall(node: Node): boolean {
   return node.parent?.type === 'call_expression' && node.parent.childForFieldName('function')?.id === node.id;
-}
-
-/** Line-preserving: comments become blanks, so line numbers still match the file. */
-function stripComments(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/\/\/[^\n]*/g, '');
 }
