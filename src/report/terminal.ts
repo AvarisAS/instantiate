@@ -36,7 +36,7 @@ export function renderSummary(stats: Stats, warnings: string[], shown = 0): stri
     lines.push('');
     lines.push(`  ${bold('load-bearing')}  ${(clean * 100).toFixed(1)}% of ${stats.loc} lines`);
     if (stats.ignoredCount > 0) {
-      lines.push(`  ${dim(`${plural(stats.ignoredCount, 'finding')} hidden by instantiate-ignore comments`)}`);
+      lines.push(`  ${dim(`${plural(stats.ignoredCount, 'instantiate-ignore comment')} in force`)}`);
     }
   }
 
