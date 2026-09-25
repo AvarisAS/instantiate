@@ -14,7 +14,7 @@ import { UserError } from './errors.js';
 import type { Coverage } from './analysis/coverage.js';
 import type { RepoInfo } from './types.js';
 import { detectRepo } from './util/repo.js';
-import { buildPythonGraph } from './index/python.js';
+import { BACKENDS } from './index/backends.js';
 import { discoverFiles } from './index/extract.js';
 
 export interface ScanOptions {
@@ -45,7 +45,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
 
   const indexStart = Date.now();
   const graph = buildGraph(config);
-  await mergePython(graph, config);
+  await mergeBackends(graph, config);
   const indexMs = Date.now() - indexStart;
 
   const analyseStart = Date.now();
@@ -183,25 +183,27 @@ function severityOf(finding: Finding): Finding['severity'] {
 }
 
 /**
- * Index Python alongside TypeScript and merge the two into one graph.
+ * Index every other language alongside TypeScript and merge them into one graph.
  *
  * A polyglot repository is one codebase, and a per-language report would hide
- * exactly the thing worth seeing. Loading the grammar costs real time, so it is
- * skipped entirely when there is no Python to read.
+ * exactly the thing worth seeing. Loading a grammar costs real time, so a
+ * language with no files in the repository costs nothing.
  */
-async function mergePython(graph: CodeGraph, config: Config): Promise<void> {
-  const files = discoverFiles(config, config.python);
-  if (files.length === 0) return;
+async function mergeBackends(graph: CodeGraph, config: Config): Promise<void> {
+  for (const backend of BACKENDS) {
+    const files = discoverFiles(config, backend.globs(config));
+    if (files.length === 0) continue;
 
-  const python = await buildPythonGraph(config, files);
-  for (const [id, symbol] of python.symbols) graph.symbols.set(id, symbol);
-  for (const [path, record] of python.files) graph.files.set(path, record);
-  for (const [path, source] of python.sources) graph.sources.set(path, source);
-  graph.edges.push(...python.edges);
-  graph.dynamicSites.push(...python.dynamicSites);
-  // A `__main__` guard is discovered by reading the file, not by its name, so
-  // these arrive as exact paths rather than as globs.
-  config.entrypoints = [...config.entrypoints, ...python.scripts];
+    const built = await backend.build(config, files);
+    for (const [id, symbol] of built.symbols) graph.symbols.set(id, symbol);
+    for (const [path, record] of built.files) graph.files.set(path, record);
+    for (const [path, source] of built.sources) graph.sources.set(path, source);
+    graph.edges.push(...built.edges);
+    graph.dynamicSites.push(...built.dynamicSites);
+    // Found by reading the file (a `__main__` guard, a `main` function), not by
+    // its name, so these arrive as exact paths rather than as globs.
+    config.entrypoints = [...config.entrypoints, ...built.scripts];
+  }
 }
 
 /**

@@ -1,11 +1,11 @@
-import Parser from 'web-tree-sitter';
+import type { Node, Tree } from 'web-tree-sitter';
 import { readFileSync, existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join, relative } from 'node:path';
+import { relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { CodeSymbol, DynamicSite, Edge, FileRecord, SymbolKind } from '../types.js';
 import { record as recordSymbol, recordModule, symbolId, moduleId } from './symbol.js';
 import type { Config } from '../config.js';
+import { parserFor, type Backend, type LanguageGraph } from './treesitter.js';
 
 /**
  * Python, through tree-sitter.
@@ -18,32 +18,9 @@ import type { Config } from '../config.js';
  * finding is to re-run.
  */
 
-export interface PythonGraph {
-  sources: Map<string, string>;
-  symbols: Map<string, CodeSymbol>;
-  edges: Edge[];
-  files: Map<string, FileRecord>;
-  /** Files with a `__main__` guard: these are run, so they are entrypoints. */
-  scripts: string[];
-  dynamicSites: DynamicSite[];
-}
-
-let parser: Parser | undefined;
-
-async function getParser(): Promise<Parser> {
-  if (parser) return parser;
-  const require = createRequire(import.meta.url);
-  const wasmDir = dirname(require.resolve('tree-sitter-wasms/package.json'));
-  await Parser.init();
-  const language = await Parser.Language.load(join(wasmDir, 'out', 'tree-sitter-python.wasm'));
-  parser = new Parser();
-  parser.setLanguage(language);
-  return parser;
-}
-
 interface FileIndex {
   file: string;
-  tree: Parser.Tree;
+  tree: Tree;
   source: string;
   /** Module-level name -> symbol id, for resolving a bare call. */
   locals: Map<string, string>;
@@ -55,8 +32,14 @@ interface FileIndex {
   bases: Map<string, string[]>;
 }
 
-export async function buildPythonGraph(config: Config, files: string[]): Promise<PythonGraph> {
-  const p = await getParser();
+export const python: Backend = {
+  name: 'python',
+  globs: (config) => config.python,
+  build: buildPythonGraph,
+};
+
+async function buildPythonGraph(config: Config, files: string[]): Promise<LanguageGraph> {
+  const p = await parserFor('python');
   const symbols = new Map<string, CodeSymbol>();
   const edges: Edge[] = [];
   const fileRecords = new Map<string, FileRecord>();
@@ -214,7 +197,7 @@ function declareModule(index: FileIndex, symbols: Map<string, CodeSymbol>): void
 }
 
 function declare(
-  node: Parser.SyntaxNode,
+  node: Node,
   index: FileIndex,
   symbols: Map<string, CodeSymbol>,
   className?: string,
@@ -272,7 +255,7 @@ function declare(
 }
 
 /** The names in `class Option(Parameter):`. */
-function baseNames(node: Parser.SyntaxNode): string[] {
+function baseNames(node: Node): string[] {
   const args = node.childForFieldName('superclasses');
   if (!args) return [];
   const out: string[] = [];
@@ -287,7 +270,7 @@ function baseNames(node: Parser.SyntaxNode): string[] {
 }
 
 function declareMethods(
-  body: Parser.SyntaxNode,
+  body: Node,
   className: string,
   index: FileIndex,
   symbols: Map<string, CodeSymbol>,
@@ -308,7 +291,7 @@ function declareMethods(
 }
 
 function record(
-  node: Parser.SyntaxNode,
+  node: Node,
   name: string,
   kind: SymbolKind,
   index: FileIndex,
@@ -335,7 +318,7 @@ function record(
 }
 
 /** `@app.route("/")` -> `app.route`, `@pytest.fixture` -> `pytest.fixture`. */
-function decoratorsOf(node: Parser.SyntaxNode): string[] | undefined {
+function decoratorsOf(node: Node): string[] | undefined {
   const wrapper = node.parent;
   if (wrapper?.type !== 'decorated_definition') return undefined;
   const out: string[] = [];
@@ -365,7 +348,7 @@ function normaliseBody(text: string): string {
     .trim();
 }
 
-function signatureOf(node: Parser.SyntaxNode): string {
+function signatureOf(node: Node): string {
   const params = node.childForFieldName('parameters');
   if (!params) return node.type;
   const names: string[] = [];
@@ -376,8 +359,8 @@ function signatureOf(node: Parser.SyntaxNode): string {
   return `(${names.join(',')})`;
 }
 
-function collectImports(root: Parser.SyntaxNode, index: FileIndex): void {
-  const visit = (node: Parser.SyntaxNode): void => {
+function collectImports(root: Node, index: FileIndex): void {
+  const visit = (node: Node): void => {
     if (node.type === 'import_from_statement') {
       const moduleNode = node.childForFieldName('module_name');
       const module = moduleNode ? resolveRelative(moduleNode.text, index.file) : '';
@@ -426,7 +409,7 @@ function resolveRelative(module: string, file: string): string {
 }
 
 function connect(
-  root: Parser.SyntaxNode,
+  root: Node,
   index: FileIndex,
   symbols: Map<string, CodeSymbol>,
   edges: Edge[],
@@ -501,7 +484,7 @@ function connect(
     }
   }
 
-  const visit = (node: Parser.SyntaxNode, enclosing: string, className?: string): void => {
+  const visit = (node: Node, enclosing: string, className?: string): void => {
     let scope = enclosing;
     let scopeClass = className;
 
@@ -623,7 +606,7 @@ function importedModule(
 }
 
 function resolveCall(
-  callee: Parser.SyntaxNode,
+  callee: Node,
   index: FileIndex,
   byModule: Map<string, FileIndex>,
   methodsByName: Map<string, string[]>,
