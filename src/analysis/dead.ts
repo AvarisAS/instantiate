@@ -148,6 +148,7 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
   }
 
   const dynamicNames = collectDynamicNames(graph);
+  const unparsedLanguages = new Set((graph.unparsed ?? []).map(extensionOf));
   const dataNames = collectDataNames(config);
   const findings: Finding[] = [];
   let deadLoc = 0;
@@ -211,7 +212,12 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
     // that name. That is a question for a human, not a verdict, and it is
     // reported as one rather than as a lower-confidence "dead".
     const unknown = !covered && uncertain(symbol);
-    const score = covered ? 0.97 : unknown ? Math.min(0.45, confidence(symbol, dynamicNames)) : confidence(symbol, dynamicNames);
+    // A file the grammar could not parse may hold the missing reference. Its
+    // language shares one namespace (Swift) or its package does (Go), so any
+    // symbol of that language is in doubt, not only those in the broken file.
+    const blind = !covered && unparsedLanguages.has(extensionOf(symbol.file));
+    const base = covered ? 0.97 : unknown ? Math.min(0.45, confidence(symbol, dynamicNames)) : confidence(symbol, dynamicNames);
+    const score = blind ? Math.min(base, 0.6) : base;
     // Same rule as duplicates: the headline number, and therefore the CI budget,
     // only counts what we would stand behind.
     if (score >= METRIC_CONFIDENCE_FLOOR) deadLoc += symbol.loc;
@@ -226,6 +232,9 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
           : `${symbol.name} is only reached from code that may be loaded by name`,
       detail:
         buildDetail(symbol, dynamicNames, dataFile) +
+        (!covered && unparsedLanguages.has(extensionOf(symbol.file))
+          ? ' Some files in this language could not be fully parsed, so a reference may have been missed.'
+          : '') +
         (covered
           ? ' A coverage report was supplied and no test executed it, so it is not reached dynamically either.'
           : ''),
@@ -332,6 +341,10 @@ function collectDataNames(config: Config): Map<string, string> {
     }
   }
   return names;
+}
+
+function extensionOf(file: string): string {
+  return file.slice(file.lastIndexOf('.'));
 }
 
 function confidence(symbol: CodeSymbol, dynamicNames: Set<string>): number {

@@ -110,7 +110,7 @@ interface DivergenceRule {
   id: string;
   pattern: RegExp;
   /** Pull the grouping key and the value out of a match, or skip it. */
-  extract: (match: RegExpExecArray) => { key: string; value: string } | undefined;
+  extract: (match: RegExpExecArray, file: string) => { key: string; value: string } | undefined;
   /** Reject a group before it becomes a finding. */
   accept?: (sites: Site[]) => boolean;
   severity: Severity;
@@ -128,7 +128,7 @@ function applyRule(graph: CodeGraph, rule: DivergenceRule): Finding[] {
     rule.pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = rule.pattern.exec(text)) !== null) {
-      const extracted = rule.extract(match);
+      const extracted = rule.extract(match, file);
       if (!extracted) continue;
       const site: Site = {
         ...locate(graph, file, text, match.index),
@@ -215,17 +215,23 @@ function divergentConstants(graph: CodeGraph): Finding[] {
     // `maxAge: 1000` in one feature and `3600` in another are two settings,
     // not a disagreement, and matching those made this mostly false positives.
     pattern:
-      /(?:\b(?:const|let|var|final|static)\s+([A-Za-z_$][\w$]*)|^\s*([A-Z][A-Z0-9_]{2,}))\s*(?::\s*\w+\s*)?=\s*(\d+)\s*(?:;|$)/gm,
-    extract: (match) => {
-      const name = match[1] ?? match[2];
+      /(?:^([ \t]*)(?:export\s+)?(?:(?:public|private|internal|fileprivate|static|final)\s+)*(?:const|let|var|val)\s+([A-Za-z_$][\w$]*)|^\s*([A-Z][A-Z0-9_]{2,}))\s*(?::\s*\w+\s*)?=\s*(\d+)\s*(?:;|$)/gm,
+    extract: (match, file) => {
+      const name = match[2] ?? match[3];
       if (!name) return undefined;
+      // In Swift an indented lowercase declaration is a member of a type, and
+      // belongs to it: `RecentSearches.limit = 10` and
+      // `ChartLegend.limit = 3` are two settings, not one fact stated twice.
+      if (file.endsWith('.swift') && match[2] && (match[1] ?? '').length > 0 && !/^[A-Z][A-Z0-9_]+$/.test(name)) {
+        return undefined;
+      }
       const words = splitIdentifier(name);
       const namesConcept = words.some((w) => NUMERIC_CONCEPTS.includes(w));
       const isDeclaredConstant = /^[A-Z][A-Z0-9_]{2,}$/.test(name);
       if (!namesConcept && !isDeclaredConstant) return undefined;
       // Key on the whole name: `retryDelay` and `retryLimit` are different
       // facts that happen to share a word.
-      return { key: words.join('-'), value: match[3] };
+      return { key: words.join('-'), value: match[4] };
     },
     // One file stating two values is usually a table of cases, not a conflict.
     accept: (sites) => new Set(sites.map((s) => s.file)).size >= 2,

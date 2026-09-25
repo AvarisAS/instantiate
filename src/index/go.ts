@@ -60,6 +60,7 @@ async function buildGoGraph(config: Config, files: string[]): Promise<LanguageGr
   const dynamicSites: DynamicSite[] = [];
   const scripts: string[] = [];
   const publicApi: string[] = [];
+  const unparsed: string[] = [];
   const modules = goModules(config.root);
 
   const indexes: FileIndex[] = [];
@@ -83,6 +84,7 @@ async function buildGoGraph(config: Config, files: string[]): Promise<LanguageGr
     const file = relative(config.root, absolute).split('\\').join('/');
     const dir = dirname(file);
     const root = tree.rootNode;
+    if (root.hasError) unparsed.push(file);
     const packageName = root.namedChildren.find((n) => n?.type === 'package_clause')?.namedChild(0)?.text ?? '';
     const pkg = `${dir}|${packageName}`;
 
@@ -147,7 +149,7 @@ async function buildGoGraph(config: Config, files: string[]): Promise<LanguageGr
     connect(index, symbols, edges, scope, filesOf, methodsByName, dynamicSites);
   }
 
-  return { symbols, edges, files: records, sources, scripts, dynamicSites, publicApi };
+  return { symbols, edges, files: records, sources, scripts, dynamicSites, publicApi, unparsed };
 }
 
 /** Every go.mod in the repository: module path -> its directory. */

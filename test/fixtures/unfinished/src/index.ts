@@ -74,3 +74,11 @@ export function suite(run: (fn: () => void) => void): void {
   });
   if (secret) console.log('set');
 }
+
+// Not flagged: var is how older code writes constants.
+var LIMIT = 20;
+export const over = (n: number): boolean => (n > LIMIT ? true : false);
+
+// Not flagged: computed at run time, so the condition can go either way.
+let found = [1, 2].find((n) => n > 1);
+export const hasFound = (): boolean => (found ? true : false);

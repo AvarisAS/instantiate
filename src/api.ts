@@ -67,6 +67,14 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
     const applied = [...dead.pluginRoots].map(([name, count]) => `${name} (${count})`).join(', ');
     warnings.push(`Framework conventions kept symbols alive that nothing names: ${applied}.`);
   }
+  const unparsed = graph.unparsed ?? [];
+  if (unparsed.length > 0) {
+    warnings.push(
+      `${unparsed.length} file${unparsed.length === 1 ? '' : 's'} could not be fully parsed ` +
+        `(${unparsed.slice(0, 3).join(', ')}${unparsed.length > 3 ? ', …' : ''}). ` +
+        'References in them may be missing, so dead-code findings that depend on them are marked uncertain.',
+    );
+  }
   const sites = graph.dynamicSites;
   if (sites.length > 0) {
     const first = sites.slice(0, 3).map((site) => `${site.file}:${site.line}`).join(', ');
@@ -205,6 +213,7 @@ async function mergeBackends(graph: CodeGraph, config: Config): Promise<void> {
     config.entrypoints = [...config.entrypoints, ...built.scripts];
     config.publicApi = [...config.publicApi, ...(built.publicApi ?? [])];
     graph.roots = [...(graph.roots ?? []), ...(built.roots ?? [])];
+    graph.unparsed = [...(graph.unparsed ?? []), ...(built.unparsed ?? [])];
   }
 }
 

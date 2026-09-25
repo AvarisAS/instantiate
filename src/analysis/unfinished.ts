@@ -105,7 +105,9 @@ function scriptSites(file: string, text: string, lineOffset: number, overridden:
   const sites: Site[] = [];
 
   const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclarationList(node) && !(node.flags & ts.NodeFlags.Const) && !isLoopHead(node)) {
+    // `let` only: it says the value is meant to change. Pre-ES2015 code writes
+    // its constants with `var`, so `var` says nothing about intent.
+    if (ts.isVariableDeclarationList(node) && node.flags & ts.NodeFlags.Let && !isLoopHead(node)) {
       for (const declaration of node.declarations) {
         if (!ts.isIdentifier(declaration.name)) continue;
         const unset = unsetVariable(declaration, declaration.name.text, sf, lineOf);
@@ -154,6 +156,9 @@ function unsetVariable(
 ): Omit<Site, 'file'> | undefined {
   // `let x!: T` promises an assignment the checker cannot see; take it at its word.
   if (declaration.exclamationToken) return undefined;
+  // A value computed at run time (`= document.querySelector(…)`) is not frozen
+  // even if nothing reassigns it. Only a fixed starting value is.
+  if (declaration.initializer && !isFixedValue(declaration.initializer)) return undefined;
   const scope = scopeOf(declaration);
   let writes = 0;
   const conditions: number[] = [];
@@ -194,6 +199,22 @@ function unsetVariable(
   };
 }
 
+/** A literal the code could only have meant as a starting point: `''`, `0`, `false`, `null`, `[]`, `{}`. */
+function isFixedValue(node: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node)) return isFixedValue(node.expression);
+  return (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    ts.isNumericLiteral(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(node) && node.text === 'undefined') ||
+    (ts.isArrayLiteralExpression(node) && node.elements.length === 0) ||
+    (ts.isObjectLiteralExpression(node) && node.properties.length === 0)
+  );
+}
+
 /** A private, writable class field: only this file can assign it, so absent writes are conclusive. */
 function isPrivateMutable(node: ts.PropertyDeclaration): boolean {
   const modifiers = ts.getModifiers(node) ?? [];
@@ -227,6 +248,7 @@ function unsetField(
   scan(owner);
 
   if (writes > 0 || conditions.length === 0) return undefined;
+  if (field.initializer && !isFixedValue(field.initializer)) return undefined;
   const initial = field.initializer ? field.initializer.getText(sf).slice(0, 40) : 'undefined';
   return {
     line: lineOf(field),

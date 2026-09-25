@@ -111,6 +111,9 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
     if (existsSync(join(root, guess))) entrypoints.push(guess);
   }
 
+  // Cloudflare Workers name their entry in wrangler config, not package.json.
+  entrypoints.push(...wranglerEntries(root));
+
   // Framework conventions: files the framework calls, that nothing in-repo
   // imports. Checked per workspace as well as at the root, since a monorepo
   // keeps its site in packages/docs rather than at the top level.
@@ -158,6 +161,37 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   publicApi.push('**/{vendor,vendored,third_party,third-party}/**/*.{ts,tsx,js,jsx,mts,cts}');
 
   return { entrypoints: unique(entrypoints), publicApi: unique(publicApi) };
+}
+
+/**
+ * `main` from every wrangler.toml / wrangler.json(c) in the repository,
+ * resolved against the folder it sits in. A Worker's entry is imported by
+ * the Cloudflare runtime, so nothing in the repository names it.
+ */
+function wranglerEntries(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(join(root, dir));
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const rel = dir ? `${dir}/${entry}` : entry;
+      if (/^wrangler\.(toml|json|jsonc)$/.test(entry)) {
+        const text = readFileSync(join(root, rel), 'utf8');
+        const main = /^\s*main\s*=\s*["']([^"']+)["']/m.exec(text)?.[1] ?? /"main"\s*:\s*"([^"]+)"/.exec(text)?.[1];
+        if (main) out.push(join(dir, main).split('\\').join('/').replace(/^\.\//, ''));
+        continue;
+      }
+      if (entry.startsWith('.') || entry === 'node_modules' || entry === 'dist' || entry === 'build') continue;
+      if (!entry.includes('.')) walk(rel, depth + 1);
+    }
+  };
+  walk('', 0);
+  return out;
 }
 
 /** Directories whose files are run, not imported. */

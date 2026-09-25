@@ -20,6 +20,8 @@ export interface LanguageGraph {
   publicApi?: string[];
   /** Symbols the runtime or a framework calls by itself: operators, system-discovered types. */
   roots?: string[];
+  /** Files the grammar could not fully parse: references in them may be missing. */
+  unparsed?: string[];
   dynamicSites: DynamicSite[];
 }
 

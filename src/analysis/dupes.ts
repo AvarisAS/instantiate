@@ -1,5 +1,7 @@
 import type { CodeGraph, CodeSymbol, Finding } from '../types.js';
 import type { Config } from '../config.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { structuralBag, vocabularyBag, cosine, splitIdentifier, type Bag } from './similarity.js';
 
 interface Candidate {
@@ -65,6 +67,8 @@ export interface DupeCluster {
   parallelSet: boolean;
   /** Thin wrappers that all delegate to one shared target. */
   delegating: boolean;
+  /** A comment on one member names another: whoever wrote it knew, and kept both. */
+  acknowledged?: boolean;
   /**
    * Members call at least one of the same things.
    *
@@ -160,6 +164,7 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
       .slice(1)
       .reduce((sum, s) => sum + s.loc, 0);
 
+    group.acknowledged = acknowledges(group, graph.root);
     const score = rankScore(group);
     if (score >= METRIC_CONFIDENCE_FLOOR) duplicateLoc += removable;
     findings.push({
@@ -390,7 +395,7 @@ function comparableSize(a: CodeSymbol, b: CodeSymbol): boolean {
 }
 
 const TEST_FILE =
-  /(^|\/)(tests?|spec|__tests__|test-d|e2e)\/|(^|\/)(test_[^/]*|[^/]*_test|[^/]*\.(test|spec))\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)Tests\/|Tests?\.swift$/i;
+  /(^|\/)(tests?|spec|__tests__|test-d|e2e)\/|(^|\/)(test_[^/]*|[^/]*_test|[^/]*\.(test|spec))\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)[^/]*Tests\/|Tests?\.swift$/i;
 
 function isTestFile(file: string): boolean {
   return TEST_FILE.test(file);
@@ -642,6 +647,13 @@ function rankScore(group: DupeCluster): number {
   if (group.connected) score -= 0.4;
   // A designed set of variants, where the differing word is the whole point.
   if (isNamingFamily(group)) score -= 0.45;
+  // Same shape, different data: two switches over one enum returning
+  // different strings are two tables, not one piece of logic written twice.
+  const tables = differentData(group);
+  if (tables) score -= 0.5;
+  // Its own comment names the other copy, so it was not written in ignorance
+  // of it, which is the whole premise of this finding.
+  if (group.acknowledged) score -= 0.4;
   // More copies is stronger evidence that nobody knew the others existed.
   if (group.members.length > 2) score += 0.05;
 
@@ -656,12 +668,85 @@ function rankScore(group: DupeCluster): number {
   //  - a parallel set — sixty locale files, one adapter per backend, a class
   //    per subtype — where identical structure is the entire point.
   //  - a thin wrapper around a shared function.
-  const expectedToMatch = isNamingFamily(group) || group.parallelSet || group.delegating;
+  const expectedToMatch =
+    isNamingFamily(group) || group.parallelSet || group.delegating || tables || !!group.acknowledged;
   if (group.overlap >= 0.9 && !expectedToMatch) {
     score = Math.max(score, penaltiesBefore - 0.2);
   }
 
   return Math.max(0.05, Math.min(1, Math.round(score * 100) / 100));
+}
+
+/**
+ * Whether the comment directly above a member names another member *and*
+ * says the difference is intended: "deliberately not `Theme.displayName`".
+ *
+ * Naming the other copy is not enough on its own. "Same rule as the shell's,
+ * see `isOutOfRange`" names it to say they match, which makes it more of a
+ * duplicate, not less.
+ */
+function acknowledges(group: DupeCluster, root: string): boolean {
+  const names = new Set(group.members.map((m) => m.name));
+  for (const member of group.members) {
+    let lines: string[];
+    try {
+      lines = readFileSync(join(root, member.file), 'utf8').split('\n');
+    } catch {
+      continue;
+    }
+    const comment: string[] = [];
+    for (let i = member.line - 2; i >= 0 && i >= member.line - 30; i--) {
+      const line = lines[i].trim();
+      if (/^(\/\/|\/\*|\*|#)/.test(line)) comment.push(line);
+      else if (line.startsWith('@')) continue;
+      else break;
+    }
+    const text = comment.join(' ');
+    if (!INTENDED_DIFFERENCE.test(text) || SAME_ON_PURPOSE.test(text)) continue;
+    for (const other of names) {
+      if (other !== member.name && new RegExp(`\\b${other.replace(/[$]/g, '\\$')}\\b`).test(text)) return true;
+    }
+  }
+  return false;
+}
+
+const INTENDED_DIFFERENCE = /\b(deliberately|intentionally|on purpose|by design|unlike|differs?|different(ly)?)\b/i;
+const SAME_ON_PURPOSE = /\b(same|identical|copy|copied|mirrors?|in sync|matches)\b/i;
+
+const STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g;
+
+/**
+ * Every pair holds several string literals and barely shares any: the code is
+ * the same, the data it carries is not. `shortLabel(for:)` returning "Pro" and
+ * `displayName` returning "Professional" for the same case are two vocabularies.
+ */
+function differentData(group: DupeCluster): boolean {
+  const sets = group.members.map((m) => new Set(m.body.match(STRING_LITERAL) ?? []));
+  if (sets.some((set) => set.size < 3)) return false;
+  // Only when the code around the strings is the same: then the strings are
+  // all that differs. JSX full of different class names is not a table.
+  const skeletons = group.members.map((m) => bigrams(bodyOf(m).replace(STRING_LITERAL, 'S')));
+  for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      const shared = [...sets[i]].filter((v) => sets[j].has(v)).length;
+      const union = new Set([...sets[i], ...sets[j]]).size;
+      if (shared / union >= 0.5) return false;
+      if (jaccard(skeletons[i], skeletons[j]) < 0.85) return false;
+    }
+  }
+  return true;
+}
+
+function bigrams(code: string): Set<string> {
+  const tokens = code.match(/[A-Za-z_$][\w$]*|\d+|\S/g) ?? [];
+  const out = new Set<string>();
+  for (let i = 1; i < tokens.length; i++) out.add(`${tokens[i - 1]} ${tokens[i]}`);
+  return out;
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  const shared = [...a].filter((x) => b.has(x)).length;
+  return shared / Math.max(1, new Set([...a, ...b]).size);
 }
 
 /** Name the cluster without listing sixty symbols in a heading. */
@@ -686,7 +771,9 @@ function describe(group: DupeCluster): string {
   const parts = [
     `${group.members.length} symbols share ${(group.similarity * 100).toFixed(0)}% similarity: ${where}.`,
   ];
-  if (group.delegating) {
+  if (group.acknowledged) {
+    parts.push('A comment on one of them names the other, so the difference looks deliberate and documented.');
+  } else if (group.delegating) {
     parts.push(
       'Each one forwards to the same underlying function, so these are named ' +
         'entry points onto one implementation rather than repeated work.',

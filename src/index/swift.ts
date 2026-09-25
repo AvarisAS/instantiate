@@ -92,6 +92,7 @@ async function buildSwiftGraph(config: Config, files: string[]): Promise<Languag
   const owners = new Map<number, string>();
   const trees: Array<{ file: string; root: Node }> = [];
   const roots: string[] = [];
+  const unparsed: string[] = [];
 
   const add = (map: Map<string, string[]>, key: string, id: string): void => {
     const list = map.get(key) ?? [];
@@ -106,13 +107,14 @@ async function buildSwiftGraph(config: Config, files: string[]): Promise<Languag
     } catch {
       continue;
     }
-    const tree = parser.parse(text);
+    const tree = parser.parse(withoutDirectives(text));
     if (!tree) continue;
     const file = relative(config.root, absolute).split('\\').join('/');
     records.set(file, fileRecord(file, text));
     sources.set(file, stripCStyleComments(text));
     recordModule(symbols, file, text.split('\n').length);
     trees.push({ file, root: tree.rootNode });
+    if (tree.rootNode.hasError) unparsed.push(file);
 
     const declareType = (node: Node, outer?: string): void => {
       const nameNode = node.childForFieldName('name');
@@ -256,7 +258,7 @@ async function buildSwiftGraph(config: Config, files: string[]): Promise<Languag
   }
 
   // `public` and `open` are the contract of a library target.
-  return { symbols, edges, files: records, sources, scripts: [], dynamicSites, publicApi: [...records.keys()], roots };
+  return { symbols, edges, files: records, sources, scripts: [], dynamicSites, publicApi: [...records.keys()], roots, unparsed };
 }
 
 function modifierText(node: Node): string {
@@ -315,4 +317,34 @@ function isDeclarationName(node: Node): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Compiler directives blanked out, line for line.
+ *
+ * The grammar cannot parse `#if DEBUG` around the members of a type: the whole
+ * type becomes one parse error, and every reference inside it is lost. With
+ * the directive lines blank, both branches read as ordinary code, which is also
+ * the right answer here: code in either branch is code the project ships in
+ * some configuration.
+ */
+export function withoutDirectives(text: string): string {
+  const blank = (m: string): string => ' '.repeat(m.length);
+  return (
+    text
+      .replace(/^[ \t]*#(if|elseif|else|endif|warning|error|sourceLocation)\b.*$/gm, '')
+      // `#available(iOS 17, *)` trips the grammar on some version forms. The
+      // check decides nothing about reachability, so it reads as `true`.
+      .replace(/#(available|unavailable)\([^)]*\)/g, (m) => 'true' + blank(m.slice(4)))
+      // `#selector(tapped(_:sender:))` names a method by its argument labels,
+      // which the grammar rejects; without them it reads as the method.
+      .replace(/\((?:(?:[A-Za-z_]\w*|_):)+\)/g, blank)
+      // Freestanding macros (`#expect(x)`, `#selector(m)`, `#Preview { }`)
+      // read as the calls they expand from, which the grammar understands.
+      .replace(/#(?=[A-Za-z_]\w*\s*[({])/g, ' ')
+      // `#filePath`, `#line` and friends are values; any value parses.
+      .replace(/#(filePath|fileID|file|line|column|function|dsohandle)\b(?!\s*\()/g, (m) => 'nil' + blank(m.slice(3)))
+      // Swift 5.10 syntax this grammar predates; same length, so columns hold.
+      .replace(/\bnonisolated\(unsafe\)/g, 'nonisolated        ')
+  );
 }

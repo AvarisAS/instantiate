@@ -100,6 +100,19 @@ async function buildPythonGraph(config: Config, files: string[]): Promise<Langua
     connect(index.tree.rootNode, index, symbols, edges, byModule, methodsByName, config);
   }
 
+  // Importing `pkg.sub.mod` runs `pkg/__init__.py` and `pkg/sub/__init__.py`
+  // first. A module-level call in a package's __init__ runs whenever anything
+  // inside the package is used, though nothing names that file.
+  for (const index of indexes) {
+    const parts = index.file.split('/');
+    for (let depth = parts.length - 1; depth > 0; depth--) {
+      const init = `${parts.slice(0, depth).join('/')}/__init__.py`;
+      if (init !== index.file && fileRecords.has(init)) {
+        edges.push({ from: moduleId(index.file), to: moduleId(init), kind: 'imports', file: index.file, line: 1 });
+      }
+    }
+  }
+
   const dynamicSites: DynamicSite[] = [];
   for (const index of indexes) {
     connectDynamic(index.file, sources.get(index.file) ?? '', symbols, edges, byModule, methodsByName, dynamicSites);
@@ -361,7 +374,7 @@ function collectImports(root: Node, index: FileIndex): void {
       const module = moduleNode ? resolveRelative(moduleNode.text, index.file) : '';
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
-        if (!child || child === moduleNode) continue;
+        if (!child || child.id === moduleNode?.id) continue;
         if (child.type === 'dotted_name' || child.type === 'identifier') {
           index.imports.set(child.text.split('.').pop()!, { module, name: child.text });
         } else if (child.type === 'aliased_import') {
@@ -528,6 +541,17 @@ function connect(
             file: index.file,
             line: node.startPosition.row + 1,
           });
+        }
+      }
+      // `state.overall` read without a call is a `@property`, or a
+      // method handed over as a callback; either way it runs. Resolved by
+      // name, as calls are, since there is no type to say which class.
+      const isCallee = node.parent?.type === 'call' && node.parent.childForFieldName('function')?.id === node.id;
+      if (attribute && !isCallee && !(object?.type === 'identifier' && index.imports.has(object.text))) {
+        for (const id of methodsByName.get(attribute) ?? []) {
+          if (id !== scope) {
+            edges.push({ from: scope, to: id, kind: 'references', file: index.file, line: node.startPosition.row + 1 });
+          }
         }
       }
     }

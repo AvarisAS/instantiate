@@ -85,6 +85,8 @@ export interface CodeGraph {
   dynamicSites: DynamicSite[];
   /** Symbols a language runtime or framework calls by itself, found while indexing. */
   roots?: string[];
+  /** Files a grammar could not fully parse, where references may be missing. */
+  unparsed?: string[];
   createdAt: number;
 }
 
