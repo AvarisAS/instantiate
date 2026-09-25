@@ -69,6 +69,8 @@ export interface DupeCluster {
   delegating: boolean;
   /** A comment on one member names another: whoever wrote it knew, and kept both. */
   acknowledged?: boolean;
+  /** Every member shares a run of real code, names included, with another. */
+  sharesBlock?: boolean;
   /**
    * Members call at least one of the same things.
    *
@@ -165,6 +167,7 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
       .reduce((sum, s) => sum + s.loc, 0);
 
     group.acknowledged = acknowledges(group, graph.root);
+    group.sharesBlock = sharesBlock(group);
     const score = rankScore(group);
     if (score >= METRIC_CONFIDENCE_FLOOR) duplicateLoc += removable;
     findings.push({
@@ -183,6 +186,8 @@ export function findDuplicates(graph: CodeGraph, config: Config): DupeResult {
       score,
       evidence: {
         similarity: Number(group.similarity.toFixed(3)),
+        overlap: Number(group.overlap.toFixed(3)),
+        sharesBlock: group.sharesBlock,
         crossFile: group.crossFile,
         connected: group.connected,
         members: group.members.map((m) => ({
@@ -651,6 +656,14 @@ function rankScore(group: DupeCluster): number {
   // different strings are two tables, not one piece of logic written twice.
   const tables = differentData(group);
   if (tables) score -= 0.5;
+  // Siblings in one file with the same shape and different words: whoever
+  // wrote one saw the other, so this is not two people solving one problem
+  // unaware. Without a real shared block (the actual code, names included,
+  // repeating for a line or more) there is nothing to extract. Across files
+  // the opposite holds: the same job in different code is the finding this
+  // tool exists for, so the rule stays inside one file.
+  const shapeOnlySiblings = !group.crossFile && group.sharesBlock === false;
+  if (shapeOnlySiblings) score -= 0.3;
   // Its own comment names the other copy, so it was not written in ignorance
   // of it, which is the whole premise of this finding.
   if (group.acknowledged) score -= 0.4;
@@ -670,7 +683,9 @@ function rankScore(group: DupeCluster): number {
   //  - a thin wrapper around a shared function.
   const expectedToMatch =
     isNamingFamily(group) || group.parallelSet || group.delegating || tables || !!group.acknowledged;
-  if (group.overlap >= 0.9 && !expectedToMatch) {
+  // "Verbatim" means the code itself, names included: the same shape with
+  // different names in it is what the penalties above are for.
+  if (group.overlap >= 0.9 && !shapeOnlySiblings && !expectedToMatch) {
     score = Math.max(score, penaltiesBefore - 0.2);
   }
 
@@ -708,6 +723,23 @@ function acknowledges(group: DupeCluster, root: string): boolean {
     }
   }
   return false;
+}
+
+/** Runs of this many tokens, names kept, repeated verbatim: about a line of code. */
+const BLOCK_TOKENS = 12;
+/** How many such runs make a block worth extracting. Measured on labelled pairs. */
+const BLOCK_MIN_RUNS = 15;
+
+function sharesBlock(group: DupeCluster): boolean {
+  const runs = group.members.map((m) => {
+    const tokens = bodyOf(m).match(/[A-Za-z_$][\w$]*|\d+|"[^"]*"|'[^']*'|\S/g) ?? [];
+    const set = new Set<string>();
+    for (let i = 0; i + BLOCK_TOKENS <= tokens.length; i++) set.add(tokens.slice(i, i + BLOCK_TOKENS).join(' '));
+    return set;
+  });
+  return runs.every((mine, i) =>
+    runs.some((theirs, j) => i !== j && [...mine].filter((run) => theirs.has(run)).length >= BLOCK_MIN_RUNS),
+  );
 }
 
 const INTENDED_DIFFERENCE = /\b(deliberately|intentionally|on purpose|by design|unlike|differs?|different(ly)?)\b/i;
