@@ -5,11 +5,26 @@ unfinished work and inconsistent conventions, ranked into a worklist.
 
 Runs locally. No account, no upload, no API key.
 
+## Install
+
 ```bash
-npx instantiate scan      # ranked findings in the terminal
-npx instantiate report    # self-contained HTML code browser
-npx instantiate serve     # live UI, rebuilds on save
+npm i -D @avarisas/instantiate      # or: pnpm add -D, yarn add -D
 ```
+
+Requires Node 22+. Or run it once without installing:
+`npx @avarisas/instantiate scan`.
+
+## Use
+
+```bash
+npx instantiate scan                        # ranked findings in the terminal
+npx instantiate report --out report.html    # self-contained HTML code browser
+npx instantiate serve                       # live UI, rebuilds on save
+```
+
+Point it at another folder with `--root <path>`. Without `--out`, `report`
+writes to `<root>/.instantiate/report.html`; add `.instantiate/report.html` to
+your `.gitignore`, or pass `--out`. `scan` writes nothing.
 
 Supports **TypeScript, JavaScript, Python, Go and Swift**, in one graph.
 

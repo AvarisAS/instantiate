@@ -3,6 +3,6 @@ from pipeline.progress import (
 )
 
 
-def test_new_state_is_pending():
-    state = Progress(stages=[])
-    assert state.overall == "pending"
+def test_new_progress_is_pending():
+    progress = Progress(stages=[])
+    assert progress.overall == "pending"

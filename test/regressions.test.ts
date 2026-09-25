@@ -18,8 +18,8 @@ const reported = (result: typeof mixed, name: string): boolean =>
   result.findings.some((f) => f.score >= 0.5 && (f.title.startsWith(`${name} `) || f.title.includes(name)));
 
 test('swift: #if around type members parses once directives are blanked', async () => {
-  // Raw, the grammar turns the whole type into a parse error; in a real app that
-  // lost every reference inside the type.
+  // Raw, the grammar turns the whole type into a parse error; in a real app
+  // that lost every reference inside the type.
   const parser = await parserFor('swift');
   const text = readFileSync(join(here, 'fixtures', 'swift', 'Sources', 'App', 'Settings.swift'), 'utf8');
   assert.equal(parser.parse(text)!.rootNode.hasError, true, 'the grammar fails on the raw file');

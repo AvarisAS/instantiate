@@ -1,7 +1,28 @@
 {
-  "name": "instantiate",
+  "name": "@avarisas/instantiate",
   "version": "0.1.0",
   "description": "See what is actually in your codebase. Finds dead code, semantic duplicates, concept drift.",
+  "keywords": [
+    "dead-code",
+    "duplicates",
+    "code-quality",
+    "static-analysis",
+    "typescript",
+    "python",
+    "go",
+    "swift",
+    "mcp"
+  ],
+  "license": "MIT",
+  "author": "Avaris AS",
+  "homepage": "https://github.com/AvarisAS/instantiate#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AvarisAS/instantiate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AvarisAS/instantiate/issues"
+  },
   "type": "module",
   "bin": {
     "instantiate": "./dist/cli.js"
@@ -10,19 +31,28 @@
   "exports": {
     ".": "./dist/api.js"
   },
+  "types": "./dist/api.d.ts",
   "files": [
     "dist",
-    "grammars/*.wasm"
+    "grammars/*.wasm",
+    "LICENSE",
+    "README.md",
+    "docs"
   ],
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "test": "node --test --import tsx test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "calibrate": "tsx scripts/calibrate.ts"
+    "calibrate": "tsx scripts/calibrate.ts",
+    "prepublishOnly": "npm run build && npm test",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

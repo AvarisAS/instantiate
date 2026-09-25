@@ -30,7 +30,13 @@ interface LabelledPair {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const all = JSON.parse(readFileSync(join(here, 'labelled-pairs.json'), 'utf8')) as LabelledPair[];
+// Pairs labelled on private code live in labelled-pairs.local.json, which is
+// never committed: their names are somebody else's business.
+const local = join(here, 'labelled-pairs.local.json');
+const all = [
+  ...(JSON.parse(readFileSync(join(here, 'labelled-pairs.json'), 'utf8')) as LabelledPair[]),
+  ...(existsSync(local) ? (JSON.parse(readFileSync(local, 'utf8')) as LabelledPair[]) : []),
+];
 
 const labelled = all.filter((pair) => existsSync(pair.repo));
 const missing = [...new Set(all.filter((pair) => !existsSync(pair.repo)).map((p) => p.repo))];

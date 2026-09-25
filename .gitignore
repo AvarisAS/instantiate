@@ -9,3 +9,6 @@ dist
 
 # Rendered previews, produced while checking the report by eye.
 .instantiate/preview*.png
+
+# Calibration pairs labelled on private code.
+scripts/labelled-pairs.local.json
