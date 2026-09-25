@@ -226,9 +226,10 @@ function divergentConstants(graph: CodeGraph): Finding[] {
         return undefined;
       }
       const words = splitIdentifier(name);
-      const namesConcept = words.some((w) => NUMERIC_CONCEPTS.includes(w));
-      const isDeclaredConstant = /^[A-Z][A-Z0-9_]{2,}$/.test(name);
-      if (!namesConcept && !isDeclaredConstant) return undefined;
+      // The name has to say what shared setting it is. SCREAMING_CASE alone
+      // only says "constant": `MARGIN_TOP` is 8 in one chart and 12 in another
+      // because they are two charts, which is not a disagreement.
+      if (!words.some((w) => NUMERIC_CONCEPTS.includes(w))) return undefined;
       // Key on the whole name: `retryDelay` and `retryLimit` are different
       // facts that happen to share a word.
       return { key: words.join('-'), value: match[4] };

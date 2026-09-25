@@ -194,6 +194,33 @@ function wranglerEntries(root: string): string[] {
   return out;
 }
 
+/**
+ * React Router in framework mode: the router loads `root`, `routes` and the
+ * entry modules from its app directory, and each route module is named in
+ * `routes.ts` as a file path in a string, which no import ever mentions.
+ */
+function reactRouterEntries(root: string, prefix: string): string[] {
+  let appDirectory = 'app';
+  for (const name of ['react-router.config.ts', 'react-router.config.js']) {
+    const path = join(root, prefix + name);
+    if (!existsSync(path)) continue;
+    appDirectory = /appDirectory\s*:\s*["']([^"']+)["']/.exec(readFileSync(path, 'utf8'))?.[1] ?? appDirectory;
+  }
+  const dir = `${prefix}${appDirectory.replace(/^\.\/|\/$/g, '')}`;
+  const out = [`${dir}/{root,routes,entry.client,entry.server}.{ts,tsx,js,jsx}`];
+  for (const name of ['routes.ts', 'routes.tsx', 'routes.js']) {
+    const path = join(root, dir, name);
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, 'utf8');
+    for (const [, file] of text.matchAll(/["'](\.{0,2}\/?[\w./@-]+\.(?:tsx|ts|jsx|js))["']/g)) {
+      out.push(join(dir, file).split('\\').join('/'));
+    }
+    // flatRoutes() takes every file under routes/ by convention.
+    if (/flatRoutes\s*\(/.test(text)) out.push(`${dir}/routes/**/*.{ts,tsx,js,jsx}`);
+  }
+  return out;
+}
+
 /** Directories whose files are run, not imported. */
 const SCRIPT_DIRS = [
   'scripts', 'script', 'bench', 'benchmark', 'benchmarks', 'perf', 'perf-measures',
@@ -241,7 +268,7 @@ export function workspaceDirs(root: string): string[] {
 function readPackage(root: string, dir: string, entrypoints: string[], publicApi: string[]): void {
   const prefix = dir === '.' ? '' : `${dir}/`;
   const pkgPath = join(root, dir, 'package.json');
-  const resolve = (p: string): string | undefined => sourceOf(root, prefix + p.replace(/^\.\//, ''));
+  const resolve = (p: string): string | undefined => sourceOf(root, p.replace(/^\.\//, ''), prefix);
 
   if (existsSync(pkgPath)) {
     try {
@@ -257,6 +284,24 @@ function readPackage(root: string, dir: string, entrypoints: string[], publicApi
       }
       // A private package has no consumers, so its entry is a true entrypoint.
       if (pkg.private && typeof pkg.main === 'string') push(entrypoints, resolve(pkg.main));
+
+      // `"dev": "tsx watch src/index.ts"`: a script that runs a source file
+      // names an entrypoint, however the build is set up.
+      for (const script of Object.values(pkg.scripts ?? {})) {
+        if (typeof script !== 'string') continue;
+        for (const [, file] of script.matchAll(/(?:^|\s)(?:\.\/)?((?:[\w@.-]+\/)*[\w@.-]+\.(?:ts|tsx|mts|cts|js|mjs|cjs))(?=\s|$|["'])/g)) {
+          if (!file.includes('config') && existsSync(join(root, prefix + file))) entrypoints.push(prefix + file);
+        }
+      }
+
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps['@react-router/dev']) entrypoints.push(...reactRouterEntries(root, prefix));
+      // Expo Router: every file under app/ is a screen the router loads by path.
+      if (deps['expo-router']) {
+        for (const base of ['app', 'src/app']) {
+          if (existsSync(join(root, prefix + base))) entrypoints.push(`${prefix}${base}/**/*.{ts,tsx,js,jsx}`);
+        }
+      }
     } catch {
       // Malformed package.json is not fatal; fall through to conventions.
     }
@@ -275,7 +320,7 @@ function readPackage(root: string, dir: string, entrypoints: string[], publicApi
  * So: generate candidates, keep the first that exists on disk, and fall back to
  * the literal path only if nothing matches.
  */
-function sourceOf(root: string, published: string): string | undefined {
+function sourceOf(root: string, published: string, prefix = ''): string | undefined {
   const clean = published.replace(/^\.\//, '');
   const roots = new Set<string>([clean]);
 
@@ -305,16 +350,19 @@ function sourceOf(root: string, published: string): string | undefined {
     candidates.push(base);
   }
 
+  // Rewritten relative to the package, then placed in it: `dist/` only
+  // means a build folder at the start of the package's own path, which it
+  // never is once `apps/api/` is in front of it.
   for (const candidate of candidates) {
     if (!candidate || !/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(candidate)) continue;
-    if (existsSync(join(root, candidate))) return candidate;
+    if (existsSync(join(root, prefix + candidate))) return prefix + candidate;
   }
   return undefined;
 }
 
 function collectExports(root: string, prefix: string, node: unknown, out: string[]): void {
   if (typeof node === 'string') {
-    push(out, sourceOf(root, prefix + node.replace(/^\.\//, '')));
+    push(out, sourceOf(root, node.replace(/^\.\//, ''), prefix));
     return;
   }
   if (node && typeof node === 'object') {
