@@ -48,6 +48,8 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
     else if (apiFiles.includes(symbol.file) && symbol.exported) roots.add(symbol.id);
   }
 
+  for (const id of graph.roots ?? []) roots.add(id);
+
   // What a framework calls by itself: a decorated controller, a lifecycle hook.
   const pluginRoots = new Map<string, number>();
   for (const symbol of graph.symbols.values()) {
@@ -111,8 +113,9 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
     if (!owner || owner.kind !== 'class') continue;
     for (const member of graph.symbols.values()) {
       if (member.kind !== 'method' || !member.id.startsWith(`${owner.file}#${owner.name}.`)) continue;
-      // Private members are not a contract with anybody.
-      if (member.name.startsWith('#') || member.name.startsWith('_')) continue;
+      // Private members are not a contract with anybody, and neither is a
+      // member its language leaves internal: Swift's default, Go's lower case.
+      if (member.name.startsWith('#') || member.name.startsWith('_') || !member.exported) continue;
       roots.add(member.id);
     }
   }
@@ -160,7 +163,13 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
   // everywhere, and says nothing about who calls ZodString's members.
   const nameIsData = (s: CodeSymbol): boolean =>
     dynamicNames.has(s.name) || s.id.split('#')[1].split('.').some((name) => dataNames.has(name));
-  const orphanFiles = findOrphanFiles(graph, reachable, coverage ? () => false : nameIsData);
+  // What only a maybe-loaded symbol reaches is as uncertain as it is: a base
+  // class used only by a class that Info.plist names is not dead either.
+  const doubtful = coverage
+    ? new Set<string>()
+    : walk([...graph.symbols.values()].filter((s) => !reachable.has(s.id) && nameIsData(s)).map((s) => s.id));
+  const uncertain = (s: CodeSymbol): boolean => nameIsData(s) || doubtful.has(s.id);
+  const orphanFiles = findOrphanFiles(graph, reachable, coverage ? () => false : uncertain);
 
   for (const file of orphanFiles) {
     const symbols = [...graph.symbols.values()].filter(
@@ -201,7 +210,7 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
     // Its name is written down somewhere as data: something may look it up by
     // that name. That is a question for a human, not a verdict, and it is
     // reported as one rather than as a lower-confidence "dead".
-    const unknown = !covered && nameIsData(symbol);
+    const unknown = !covered && uncertain(symbol);
     const score = covered ? 0.97 : unknown ? Math.min(0.45, confidence(symbol, dynamicNames)) : confidence(symbol, dynamicNames);
     // Same rule as duplicates: the headline number, and therefore the CI budget,
     // only counts what we would stand behind.
@@ -210,7 +219,11 @@ export function findDeadCode(graph: CodeGraph, config: Config, coverage?: Covera
       id: `dead:${symbol.id}`,
       kind: 'dead',
       severity: symbol.loc >= 40 ? 'high' : symbol.loc >= 10 ? 'medium' : 'low',
-      title: unknown ? `${symbol.name} may be loaded by name` : `${symbol.name} is never reached`,
+      title: !unknown
+        ? `${symbol.name} is never reached`
+        : nameIsData(symbol)
+          ? `${symbol.name} may be loaded by name`
+          : `${symbol.name} is only reached from code that may be loaded by name`,
       detail:
         buildDetail(symbol, dynamicNames, dataFile) +
         (covered
@@ -289,7 +302,7 @@ function collectDynamicNames(graph: CodeGraph): Set<string> {
 }
 
 /** Data formats a framework or container reads names from. */
-const DATA_FILES = ['**/*.{json,yml,yaml,toml,ini,cfg,xml,properties}'];
+const DATA_FILES = ['**/*.{json,yml,yaml,toml,ini,cfg,xml,properties,plist,storyboard,xib}'];
 const NOT_DATA = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|composer\.lock|tsconfig[^/]*\.json|coverage-final\.json)$/;
 
 /**

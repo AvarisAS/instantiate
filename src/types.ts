@@ -83,6 +83,8 @@ export interface CodeGraph {
   entrypoints: string[];
   /** Places that reach code by a name computed at run time, which no static graph follows. */
   dynamicSites: DynamicSite[];
+  /** Symbols a language runtime or framework calls by itself, found while indexing. */
+  roots?: string[];
   createdAt: number;
 }
 

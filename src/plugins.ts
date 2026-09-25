@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CodeSymbol } from './types.js';
 import { workspaceDirs } from './config.js';
@@ -162,6 +162,16 @@ export const BUILTIN_PLUGINS: Plugin[] = [
     ],
   },
   {
+    // Not a package but the language's own runtime: Interface Builder, the
+    // Objective-C runtime and the app entry point all call by attribute.
+    name: 'swift',
+    packages: ['swift'],
+    decorators: [
+      'main', 'objc', 'objcMembers', 'IBAction', 'IBOutlet', 'IBInspectable', 'IBDesignable',
+      'IBSegueAction', 'NSManaged', 'UIApplicationMain', 'NSApplicationMain',
+    ],
+  },
+  {
     name: 'sqlalchemy',
     packages: ['sqlalchemy', 'SQLAlchemy'],
     decorators: ['validates', 'hybrid_property', 'listens_for', 'event.listens_for', 'declared_attr'],
@@ -217,6 +227,20 @@ function escape(text: string): string {
   return text.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** An `.xcodeproj` at the root or one level down, where apps usually keep it. */
+function hasXcodeProject(root: string): boolean {
+  const look = (dir: string): string[] => {
+    try {
+      return readdirSync(join(root, dir));
+    } catch {
+      return [];
+    }
+  };
+  const top = look('.');
+  if (top.some((e) => e.endsWith('.xcodeproj') || e.endsWith('.xcworkspace'))) return true;
+  return top.filter((e) => !e.startsWith('.')).some((e) => look(e).some((f) => f.endsWith('.xcodeproj')));
+}
+
 /**
  * Declared dependencies, lower-cased, from every package.json in the
  * workspace and the usual Python manifests. Only presence matters.
@@ -233,6 +257,9 @@ function dependencies(root: string): Set<string> {
       // No package.json here.
     }
   }
+
+  // A Swift package or Xcode project: the Swift rules apply.
+  if (existsSync(join(root, 'Package.swift')) || hasXcodeProject(root)) deps.add('swift');
 
   // Python manifests have several shapes; a distribution name at the start of
   // a requirement, or quoted in a list, is enough to know it is used.

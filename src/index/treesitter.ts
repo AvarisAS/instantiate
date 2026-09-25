@@ -15,6 +15,10 @@ export interface LanguageGraph {
   sources: Map<string, string>;
   /** Files discovered to be run directly, by reading them rather than by name. */
   scripts: string[];
+  /** Files whose exported symbols are a contract with code outside this repository. */
+  publicApi?: string[];
+  /** Symbols the runtime or a framework calls by itself: operators, system-discovered types. */
+  roots?: string[];
   dynamicSites: DynamicSite[];
 }
 

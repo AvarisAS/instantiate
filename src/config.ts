@@ -15,6 +15,8 @@ export interface Config {
   satellites: string[];
   /** Python sources, indexed by the tree-sitter backend rather than by tsc. */
   python: string[];
+  go: string[];
+  swift: string[];
   /**
    * Look for duplicates inside test files.
    *
@@ -56,6 +58,13 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi' | 'plugins'> =
     '**/generated/**',
     '**/__generated__/**',
     '**/*.pb.ts',
+    // Go's vendored dependencies and fixtures, and Swift's package caches.
+    '**/vendor/**/*.go',
+    '**/testdata/**',
+    '**/*.pb.go',
+    '**/Pods/**',
+    '**/Carthage/**',
+    '**/DerivedData/**',
   ],
   // Measured, not guessed: genuine re-implementations of one idea land at 0.81
   // and above, while the nearest unrelated pair sits below 0.50. The cut-off
@@ -65,6 +74,8 @@ const DEFAULTS: Omit<Config, 'root' | 'entrypoints' | 'publicApi' | 'plugins'> =
   // templates. They are never indexed, yet what they import is very much alive.
   satellites: ['**/*.{mdx,md,vue,svelte,astro,html}'],
   python: ['**/*.py'],
+  go: ['**/*.go'],
+  swift: ['**/*.swift'],
   includeTests: false,
   dupeThreshold: 0.72,
   dupeMinLoc: 4,
@@ -115,6 +126,10 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   entrypoints.push('**/{__main__,main,manage,app,wsgi,asgi,conftest,setup}.py');
   entrypoints.push('**/{test_*,*_test}.py');
   entrypoints.push('{test,tests}/**/*.py');
+  // Go: `go test` runs every _test.go file.
+  entrypoints.push('**/*_test.go');
+  // Swift: the package manifest, a top-level main.swift, and XCTest targets.
+  entrypoints.push('**/Package.swift', '**/main.swift', '**/*Tests/**/*.swift', '**/*Tests.swift');
 
   entrypoints.push('{test,tests,spec,__tests__,test-d,type-tests,types-test}/**/*.{ts,tsx,js,jsx,mts,cts,py}');
   entrypoints.push('**/*.{test-d,typetest}.{ts,tsx}');
@@ -126,7 +141,7 @@ export function detectEntrypoints(root: string): { entrypoints: string[]; public
   // like rather than at the root.
   // Every language, not just the TypeScript ones: click's examples are Python,
   // and a glob listing only JS extensions made them unreachable by construction.
-  entrypoints.push(`**/{${SCRIPT_DIRS.join(',')}}/**/*.{ts,tsx,js,jsx,mts,cts,py}`);
+  entrypoints.push(`**/{${SCRIPT_DIRS.join(',')}}/**/*.{ts,tsx,js,jsx,mts,cts,py,go,swift}`);
 
   // A package's `__init__.py` re-exports are its published surface, exactly as a
   // barrel is in TypeScript: absent callers inside the repo are the point.

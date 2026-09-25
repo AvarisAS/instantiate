@@ -21,7 +21,7 @@ No account, no upload, no API key. Everything runs locally.
 
 ## What it finds
 
-Indexes **TypeScript, JavaScript and Python** into one graph — a polyglot repo is
+Indexes **TypeScript, JavaScript, Python, Go and Swift** into one graph — a polyglot repo is
 one codebase, and a per-language report hides the thing worth seeing.
 
 **Dead code** — reachability from your entrypoints. Deleting is the highest-value
@@ -245,6 +245,24 @@ now covered by a regression test:
 - path aliases (`@/components/x`) from whichever tsconfig governs the file
 - modules that run code at load and that nothing imports, which are scripts
 
+Go and Swift follow each language's own rules rather than TypeScript's:
+
+- **Go:** a package is its directory, so files see each other without imports;
+  imports resolve through every `go.mod` in the repository; `init()` runs when
+  a package is loaded, including by a blank import; `x_unix.go` and
+  `x_windows.go` both define `x` and both count; interfaces are satisfied
+  implicitly, so a used type keeps its exported methods; exported names outside
+  `internal/` are a public contract. Checked on gorilla/mux, spf13/cobra and
+  charmbracelet/glow.
+- **Swift:** every file in a target shares one namespace; a type keeps what its
+  protocols require (a table covers the standard ones, `required` names the
+  repository's own), and everything non-private when it inherits from a
+  framework class whose requirements are unknown, such as `UIViewController`;
+  `override`, `@main`, `@objc`, `@IBAction` and operators are always used;
+  App Intents, widgets and previews are discovered by the system; a class named
+  in a storyboard, xib or plist may be loaded by name. Checked on onevcat/Rainbow,
+  nalexn/clean-architecture-swiftui and sindresorhus/Gifski.
+
 Duplicate detection knows the difference between redundancy and design:
 
 - test suites, which repeat their scaffolding on purpose — opt in with
@@ -263,10 +281,13 @@ Duplicate detection knows the difference between redundancy and design:
 
 ## Honest limits
 
-- **TypeScript, JavaScript and Python.** Other languages need their own indexer.
-- **Python resolution is weaker than TypeScript's.** There is no type checker, so
+- **TypeScript, JavaScript, Python, Go and Swift.** Another language is one
+  file in `src/index/` implementing the `Backend` interface, plus a grammar in
+  `grammars/` (see `scripts/build-grammars.sh`).
+- **Python, Go and Swift resolution is weaker than TypeScript's.** There is no type checker, so
   `obj.method()` resolves by name across every class that defines it. That
-  over-approximates on purpose: a false "alive" costs one missed finding, a false
+  over-approximates on purpose (in Go, an exported method of a used type is
+  always kept, since any interface anywhere may call it): a false "alive" costs one missed finding, a false
   "dead" costs trust in all of them.
 - **A static graph cannot see all dynamic dispatch.** It follows what it can:
   a key whose type is a set of string literals (`this[verb]()` with

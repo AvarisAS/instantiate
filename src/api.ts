@@ -203,6 +203,8 @@ async function mergeBackends(graph: CodeGraph, config: Config): Promise<void> {
     // Found by reading the file (a `__main__` guard, a `main` function), not by
     // its name, so these arrive as exact paths rather than as globs.
     config.entrypoints = [...config.entrypoints, ...built.scripts];
+    config.publicApi = [...config.publicApi, ...(built.publicApi ?? [])];
+    graph.roots = [...(graph.roots ?? []), ...(built.roots ?? [])];
   }
 }
 

@@ -57,7 +57,9 @@ export function findUnfinished(graph: CodeGraph, config: Config): UnfinishedResu
     }
     if (file.endsWith('.py')) {
       sites.push(...pythonStubs(graph, file, text, overridden));
-    } else {
+    } else if (/\.(go|swift)$/.test(file)) {
+      sites.push(...braceStubs(graph, file, text, overridden));
+    } else if (/\.[cm]?[jt]sx?$/.test(file)) {
       sites.push(...scriptSites(file, text, 0, overridden));
     }
   }
@@ -441,6 +443,35 @@ function pythonStubs(graph: CodeGraph, file: string, text: string, overridden: S
     } else if (code.length === 1 && /^(pass|\.\.\.)$/.test(code[0]) && body.some((l) => MARKER.test(l))) {
       const note = body.find((l) => MARKER.test(l))!;
       sites.push(stubSite(symbol, `\`${symbol.name}\` does nothing and carries a note: "${note.slice(0, 80)}".`));
+    }
+  }
+  return sites;
+}
+
+/** A body that only refuses: Go's `panic("not implemented")`, Swift's `fatalError("TODO")`. */
+const REFUSAL = /^(panic|fatalError|preconditionFailure)\(\s*"[^"]*\b(not\s+(yet\s+)?implemented|unimplemented|todo|tbd|stub)\b[^"]*"\s*\)$/i;
+
+/**
+ * Go and Swift stubs, read from the raw lines between the braces: the same two
+ * shapes as elsewhere, a refusal or an empty body holding a TODO.
+ */
+function braceStubs(graph: CodeGraph, file: string, text: string, overridden: Set<string>): Site[] {
+  const lines = text.split('\n');
+  const sites: Site[] = [];
+  for (const symbol of graph.symbols.values()) {
+    if (symbol.file !== file || (symbol.kind !== 'function' && symbol.kind !== 'method')) continue;
+    if (symbol.kind === 'method' && overridden.has(symbol.name)) continue;
+    const raw = lines.slice(symbol.line - 1, symbol.endLine).join('\n');
+    const open = raw.indexOf('{');
+    const close = raw.lastIndexOf('}');
+    if (open === -1 || close <= open) continue;
+    const body = raw.slice(open + 1, close).split('\n').map((l) => l.trim()).filter(Boolean);
+    const code = body.filter((l) => !l.startsWith('//'));
+    if (code.length === 1 && REFUSAL.test(code[0])) {
+      sites.push(stubSite(symbol, `\`${symbol.name}\` only calls ${code[0]}. Anything that calls it stops there.`));
+    } else if (code.length === 0 && body.some((l) => MARKER.test(l))) {
+      const note = body.find((l) => MARKER.test(l))!.replace(/^\/\/\s*/, '');
+      sites.push(stubSite(symbol, `\`${symbol.name}\` has an empty body with a note left in it: "${note.slice(0, 80)}".`));
     }
   }
   return sites;

@@ -390,7 +390,7 @@ function comparableSize(a: CodeSymbol, b: CodeSymbol): boolean {
 }
 
 const TEST_FILE =
-  /(^|\/)(tests?|spec|__tests__|test-d|e2e)\/|(^|\/)(test_[^/]*|[^/]*_test|[^/]*\.(test|spec))\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/i;
+  /(^|\/)(tests?|spec|__tests__|test-d|e2e)\/|(^|\/)(test_[^/]*|[^/]*_test|[^/]*\.(test|spec))\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)Tests\/|Tests?\.swift$/i;
 
 function isTestFile(file: string): boolean {
   return TEST_FILE.test(file);

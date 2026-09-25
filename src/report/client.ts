@@ -490,6 +490,21 @@ const JS_KEYWORDS = new Set([
   'declare', 'readonly', 'public', 'private', 'protected', 'static', 'abstract', 'satisfies',
 ]);
 
+// Go and Swift share JavaScript's comments and strings, so only the words differ.
+const GO_KEYWORDS = new Set([
+  'package', 'import', 'func', 'return', 'if', 'else', 'for', 'range', 'switch', 'case',
+  'default', 'break', 'continue', 'goto', 'fallthrough', 'defer', 'go', 'select', 'chan',
+  'type', 'struct', 'interface', 'map', 'var', 'const', 'nil', 'true', 'false', 'iota',
+]);
+const SWIFT_KEYWORDS = new Set([
+  'import', 'func', 'return', 'if', 'else', 'guard', 'for', 'in', 'while', 'repeat', 'switch',
+  'case', 'default', 'break', 'continue', 'fallthrough', 'defer', 'do', 'try', 'catch', 'throw',
+  'throws', 'rethrows', 'async', 'await', 'class', 'struct', 'enum', 'protocol', 'extension',
+  'init', 'deinit', 'let', 'var', 'static', 'final', 'override', 'private', 'fileprivate',
+  'internal', 'public', 'open', 'mutating', 'some', 'any', 'self', 'Self', 'super', 'nil',
+  'true', 'false', 'where', 'as', 'is', 'typealias', 'associatedtype', 'inout', 'weak', 'lazy',
+]);
+const KEYWORDS = { js: JS_KEYWORDS, go: GO_KEYWORDS, swift: SWIFT_KEYWORDS };
 const PY_KEYWORDS = new Set([
   'def', 'class', 'return', 'if', 'elif', 'else', 'for', 'while', 'break', 'continue',
   'import', 'from', 'as', 'try', 'except', 'finally', 'raise', 'with', 'lambda', 'pass',
@@ -508,7 +523,7 @@ const BACKSLASH = String.fromCharCode(92);
 
 /** Highlight one line, given and returning the multi-line state it is inside. */
 function highlightLine(text, lang, state) {
-  const keywords = lang === 'py' ? PY_KEYWORDS : JS_KEYWORDS;
+  const keywords = lang === 'py' ? PY_KEYWORDS : KEYWORDS[lang] || JS_KEYWORDS;
   let out = '';
   let i = 0;
 
@@ -699,7 +714,7 @@ function codePane() {
   if (keep.size === 0) for (let n = 1; n <= total; n++) keep.add(n);
   for (const n of expandedFolds) keep.add(n);
 
-  const lang = /\.(py)$/.test(file.path) ? 'py' : 'js';
+  const lang = /\.py$/.test(file.path) ? 'py' : /\.go$/.test(file.path) ? 'go' : /\.swift$/.test(file.path) ? 'swift' : 'js';
   let state = { block: null };
   const rows = [];
   let n = 1;
