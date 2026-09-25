@@ -159,6 +159,7 @@ export interface Budget {
   drift: number;
   contradiction: number;
   unfinished?: number;
+  ignored?: number;
   createdAt: number;
 }
 
@@ -186,6 +187,8 @@ export interface Stats {
   contradictionCount: number;
   /** State nothing sets and bodies that only say they are not written yet. */
   unfinishedCount: number;
+  /** `instantiate-ignore` comments that hid a finding. A budget line, so it only grows on purpose. */
+  ignoredCount: number;
   indexMs: number;
   analyseMs: number;
 }

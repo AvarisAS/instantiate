@@ -9,6 +9,7 @@ import { findConcepts } from './analysis/concepts.js';
 import { findDrift } from './analysis/drift.js';
 import { findContradictions } from './analysis/contradiction.js';
 import { findUnfinished } from './analysis/unfinished.js';
+import { applyIgnores } from './analysis/ignores.js';
 import { UserError } from './errors.js';
 import type { Coverage } from './analysis/coverage.js';
 import type { RepoInfo } from './types.js';
@@ -100,20 +101,63 @@ export async function scan(options: ScanOptions = {}): Promise<ScanResult> {
     driftCount: drift.count,
     contradictionCount: contradictions.count,
     unfinishedCount: unfinished.count,
+    ignoredCount: 0,
     indexMs,
     analyseMs,
   };
 
   const repo = detectRepo(root);
 
-  const findings = rank([
+  const found = [
     ...dead.findings,
     ...dupes.findings,
     ...drift.findings,
     ...contradictions.findings,
     ...unfinished.findings,
-  ]);
+  ];
+  const ignores = applyIgnores(found, graph);
+  // What was ignored was judged fine, so it leaves the headline numbers too.
+  const before = headline(found);
+  const after = headline(ignores.findings);
+  stats.deadLoc -= before.dead - after.dead;
+  stats.duplicateLoc -= before.duplicate - after.duplicate;
+  stats.driftCount -= before.drift - after.drift;
+  stats.contradictionCount -= before.contradiction - after.contradiction;
+  stats.unfinishedCount -= before.unfinished - after.unfinished;
+  stats.ignoredCount = ignores.applied.length;
+
+  const where = (list: Array<{ file: string; line: number }>): string =>
+    list.slice(0, 3).map((i) => `${i.file}:${i.line}`).join(', ') + (list.length > 3 ? ', …' : '');
+  if (ignores.malformed.length > 0) {
+    warnings.push(
+      `${ignores.malformed.length} instantiate-ignore comment${ignores.malformed.length === 1 ? ' is' : 's are'} ` +
+        `missing a kind or a reason, so ${ignores.malformed.length === 1 ? 'it hides' : 'they hide'} nothing ` +
+        `(${where(ignores.malformed)}). Write it as \`instantiate-ignore dead: why this is fine\`.`,
+    );
+  }
+  if (ignores.stale.length > 0) {
+    warnings.push(
+      `${ignores.stale.length} instantiate-ignore comment${ignores.stale.length === 1 ? ' no longer hides' : 's no longer hide'} ` +
+        `anything (${where(ignores.stale)}). Delete ${ignores.stale.length === 1 ? 'it' : 'them'}.`,
+    );
+  }
+
+  const findings = rank(ignores.findings);
   return { graph, findings, concepts, stats, config, warnings, repo };
+}
+
+/** The headline numbers as the findings imply them, used to take ignored findings out. */
+function headline(findings: Finding[]) {
+  const confident = (f: Finding): boolean => f.score >= 0.5;
+  const sum = (kinds: string[]): number =>
+    findings.filter((f) => kinds.includes(f.kind) && confident(f)).reduce((n, f) => n + f.loc, 0);
+  return {
+    dead: sum(['dead', 'orphan-file']),
+    duplicate: sum(['duplicate']),
+    drift: findings.filter((f) => f.kind === 'drift').length,
+    contradiction: findings.filter((f) => f.kind === 'contradiction').length,
+    unfinished: findings.filter((f) => f.kind === 'unfinished' && confident(f)).length,
+  };
 }
 
 /**

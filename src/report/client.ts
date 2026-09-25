@@ -871,6 +871,7 @@ function toolbarHtml(files) {
         stat(String(s.driftCount), 'drifting', s.driftCount === 0 ? 'clean' : '') +
         stat(String(s.contradictionCount), 'conflicting', s.contradictionCount === 0 ? 'clean' : 'alert') +
         stat(String(s.unfinishedCount || 0), 'unfinished', !s.unfinishedCount ? 'clean' : 'alert') +
+        (s.ignoredCount ? stat(String(s.ignoredCount), 'ignored', '') : '') +
       '</span>' +
     '</div>';
 }

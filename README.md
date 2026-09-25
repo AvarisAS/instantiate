@@ -170,6 +170,34 @@ Whatever matches is treated as used, along with everything it calls. Rules can
 only remove findings, never add them, and the scan says how many symbols each
 rule kept alive.
 
+### Ignoring a finding
+
+For a one-off that no rule describes, say so beside the code:
+
+```ts
+// instantiate-ignore dead: required by path from the deploy script
+function boot() { … }
+```
+
+```py
+# instantiate-ignore unfinished: raises on purpose until v2 ships
+def compress(data): …
+```
+
+- **A reason is required.** Without one the comment hides nothing and the scan says so.
+- **Name the kinds**: `dead`, `duplicate`, `drift`, `conflict`, `unfinished`
+  (comma-separated for several). A real duplicate on a function you've marked
+  `dead` still shows.
+- **It covers the next declaration only.** Use `exclude` for whole paths.
+- **Stale comments are reported.** Once the finding is gone, the scan asks you
+  to delete the comment.
+- **The count is a budget line.** `instantiate check` fails when the number of
+  ignores goes up, until someone runs `instantiate budget` to accept it.
+  There's no fixed quota; each new exception is just a visible decision.
+
+For code you can't or won't edit (vendored or generated files),
+`instantiate dismiss <id> "<why>"` does the same from `.instantiate/dismissed.json`.
+
 `publicApi` is the line that matters for libraries. Without it every export looks
 unreachable, the dead-code report is noise, and the tool gets uninstalled in
 minute two.

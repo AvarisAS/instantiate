@@ -31,6 +31,7 @@ export function writeBudget(root: string, stats: Stats): Budget {
     drift: stats.driftCount,
     contradiction: stats.contradictionCount,
     unfinished: stats.unfinishedCount,
+    ignored: stats.ignoredCount,
     createdAt: Date.now(),
   };
   mkdirSync(join(root, '.instantiate'), { recursive: true });
@@ -52,6 +53,8 @@ export function checkBudget(budget: Budget, stats: Stats): BudgetCheck {
     // only once it has been recorded, never as an accidental instant failure.
     ['contradictions', stats.contradictionCount, budget.contradiction ?? stats.contradictionCount],
     ['unfinished', stats.unfinishedCount, budget.unfinished ?? stats.unfinishedCount],
+    // Each new exception is a decision someone has to lock in on purpose.
+    ['ignored in code', stats.ignoredCount, budget.ignored ?? stats.ignoredCount],
   ];
 
   const lines: string[] = [];

@@ -35,6 +35,9 @@ export function renderSummary(stats: Stats, warnings: string[], shown = 0): stri
     const clean = 1 - (stats.deadLoc + stats.duplicateLoc) / stats.loc;
     lines.push('');
     lines.push(`  ${bold('load-bearing')}  ${(clean * 100).toFixed(1)}% of ${stats.loc} lines`);
+    if (stats.ignoredCount > 0) {
+      lines.push(`  ${dim(`${plural(stats.ignoredCount, 'finding')} hidden by instantiate-ignore comments`)}`);
+    }
   }
 
   const counted =
