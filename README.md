@@ -108,7 +108,7 @@ function boot() {}
 
 ## Website
 
-A landing page and a page of popular libraries, scanned,
+A landing page and [popular libraries, scanned](https://instantiate.avaris.no/libraries.html),
 each with its full report. Built by `scripts/build-site.ts` from `site/libraries.json`
 and deployed by `.github/workflows/pages.yml`. Build it locally with
 `npx tsx scripts/build-site.ts --out _site`.
